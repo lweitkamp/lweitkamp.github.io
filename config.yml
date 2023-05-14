@@ -1,4 +1,52 @@
 baseURL: http://example.org/
 languageCode: en-us
-title: My New Hugo Site
+title: Laurens Weitkamp
 theme: "PaperMod"
+
+params:
+    # social media metadata
+    env: production
+
+    # ShowBreadCrumbs: true
+    homeInfoParams:
+        Title: Work In Progress 🔧
+        Content: ...
+
+    # Table of content stuff
+    ShowToc: true
+    TocOpen: true
+
+    # Social Icons on main page
+    socialIcons:
+      - name: "twitter"
+        title: "Twitter"
+        url: "https://twitter.com/laurensweitkamp"
+      - name: "github"  
+        title: "GitHub"
+        url: "https://github.com/lweitkamp"
+    
+markup:
+    goldmark:
+        renderer:
+            unsafe: true
+    highlight:
+        # anchorLineNos: true
+        codeFences: true
+        guessSyntax: true
+        lineNos: true
+        # noClasses: false
+        style: solarized-dark
+        #lineNos: false
+
+
+# Menu
+menu:
+  main:
+    - identifier: posts
+      name: posts
+      url: /posts/
+      weight: 10
+    - identifier: transformer series
+      name: transformer series
+      url: /transformers/index.html
+      weight: 20
