@@ -42,11 +42,11 @@ markup:
 # Menu
 menu:
   main:
-    - identifier: posts
-      name: posts
+    - identifier: Post Archive
+      name: Post Archive
       url: /posts/
       weight: 10
-    - identifier: transformer series
-      name: transformer series
-      url: /transformers/index.html
+    - identifier: Optimizing Transformers Series
+      name: Optimizing Transformers Series
+      url: /optimizing_transformers/
       weight: 20
