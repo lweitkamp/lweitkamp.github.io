@@ -1,12 +1,12 @@
 +++
 author = "Laurens Weitkamp"
 title = "Packing"
-date = "2023-04-17"
+date = "2023-06-01"
 description = "Efficient Sequence Processing in Transformers"
 tags = [ "transformers", "training", "optimization", "packing", "padding"]
 +++
 # What is Packing
-When training a transformer model we set the context length (=number of tokens to be parsed) and fix it - every single sequence is either truncated or padded to fit the context length. Truncation is fine, but padding a sequence to fit the context length is a waste of tokens. We essentially fill the sequence with a specific token and ignore those tokens during loss calculation. You can probably guess why it's a waste of space and why we would like to reduce the amount of padding during training.
+When training a transformer model we set the context length and fix it - every single sequence in a batch is either truncated or padded to fit the context length. Truncation is fine, but padding a sequence to fit the context length is a waste of tokens. We essentially fill the sequence with a specific token and ignore those tokens during loss calculation. You can probably guess why it's a waste of space and why we would like to reduce the amount of padding during training.
 
 In comes '*packing*'. Packing is briefly described in most papers (in fact, most authors cite T5 for it), here are some from the literature:
 | Paper | Quote |
@@ -16,11 +16,11 @@ In comes '*packing*'. Packing is briefly described in most papers (in fact, most
 | T5 | *"Whenever possible, we “***pack***” multiple sequences into each entry of the batch so that our batches contain roughly 216 = 65,536 tokens."* |
 | T0 | *"we use ***packing*** to combine multiple training examples into a single sequence to reach the maximum sequence length."* |
 
-A very sensible approach to reducing padding; if a sequence ends early, figure out if we can jam another sequence right behind it. But it has some caveats. Let's say we pack two randomly sampled sentences *A* and *B* of lengths *k*, *v* respectively, and that it fits the context length *c* with some padding possibly required (*k* + *v* ≤ *c*). This can be seen below:
+A very sensible approach to reducing padding; if a sequence ends early, figure out if we can jam another sequence right behind it. But it has some caveats. Let's say we pack two randomly sampled sentences $A$ and $B$ of lengths $k$, $v$ respectively, and that it fits the context length $c$ with some padding possibly required ($k + v \leq c$). This can be seen below:
 
 ![Two sequences "packed".](/img/packed_sequences.svg)
 
-In this case we have reduced the batch count by one by packing two sequences. However, imaginge we are using an autoregressive transformer decoder to predict token *B*1 given a completely unrelated randomly sampled sentence *A*. We are essentially predicting randomness. This is called *cross-contamination* - this ***should*** hurt the loss since whatever we would predict is somewhat nonsensical. To counter the effect of cross-contamination, the GPT-3 authors chose to simply add an `end-of-document` token embedding between packed sequences which seems to work fine[^6].
+In this case we have reduced the batch count by one by packing two sequences. However, imaginge we are using an autoregressive transformer decoder to predict token $B_1$ given a completely unrelated randomly sampled sentence $A$. We are essentially predicting randomness. This is called *cross-contamination* - this ***should*** hurt the loss since whatever we would predict is somewhat nonsensical. To counter the effect of cross-contamination, the GPT-3 authors chose to simply add an `end-of-document` token embedding between packed sequences which seems to work fine[^6].
 
 Masked Language Modelling approaches like RoBERTa[^1] have different issues when it comes to cross-contamination. Sequences are sampled from documents and differentiated by the `end-of-document`, but it appears that sampling sequences from different documents hurts the loss when compared to sequences from the same document. Sampling from the same document is often times difficult or impossible, so the authors take the loss.
 
