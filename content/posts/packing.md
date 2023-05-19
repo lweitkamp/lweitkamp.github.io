@@ -1,14 +1,12 @@
-+++
-author = "Laurens Weitkamp"
-title = "Packing"
-date = "2023-06-01"
-description = "Efficient Sequence Processing in Transformers"
-tags = [ "transformers", "training", "optimization", "packing", "padding"]
-+++
-# What is Packing
-When training a transformer model we set the context length and fix it - every single sequence in a batch is either truncated or padded to fit the context length. Truncation is fine, but padding a sequence to fit the context length is a waste of tokens. We essentially fill the sequence with a specific token and ignore those tokens during loss calculation. You can probably guess why it's a waste of space and why we would like to reduce the amount of padding during training.
+---
+title: "Packing"
+date: 2023-05-19T16:25:23+02:00
+draft: false
+---
+When training a transformer model we set the context length and fix it - every single sequence in a batch is either truncated or padded to fit the context length. Truncation is fine, but padding a sequence to fit the context length is a waste of tokens. We essentially fill the sequence with a specific token and ignore those tokens during loss calculation. You can probably guess why it's a waste of space and why we would like to reduce the amount of padding during training. In this post I will discuss an approach that reduces padding called *packing*.
 
-In comes '*packing*'. Packing is briefly described in most papers (in fact, most authors cite T5 for it), here are some from the literature:
+# What is Packing
+Packing is briefly described in most papers (in fact, most authors cite T5 for it), here are some from the literature:
 | Paper | Quote |
 | -- | -- |
 | RoBERTa | *"Each input is ***packed*** with full sentences sampled contiguously from one or more documents, such that the total length is at most 512 tokens."* |
@@ -70,9 +68,9 @@ Repeatedly pack sequences and merge their respective autoregressive masks until 
 ![Packed Mask](/img/packed_masks.svg)
 With additive-masked attention, everything in the gray region should be set to negative infinity to ensure that they will not be used during softmax. Finally, to make sure the loss is calculated properly, make sure to mask out any padded location in the loss too (but that is technically unrelated to packing).
 
-If properly implemented as above, you might notice that it makes no difference if we have *n* sequences or *l* ≤ *n* packed sequences sourced from the *n* - the gradient step should be equal[^3]. It's worth your time looking at figures [3](https://arxiv.org/pdf/2107.02027.pdf#page=7) and [4](https://arxiv.org/pdf/2107.02027.pdf#page=8) in the paper, they explain the performance of packing and the effect of 'proper' masking. 
+If properly implemented as above, you might notice that it makes no difference if we have $n$ sequences or $l \leq n$ packed sequences sourced from the $n$ - the gradient step should be equal[^3]. It's worth your time looking at figures [3](https://arxiv.org/pdf/2107.02027.pdf#page=7) and [4](https://arxiv.org/pdf/2107.02027.pdf#page=8) in the paper, they explain the performance of packing and the effect of 'proper' masking. 
 
-It's not a complete free lunch though - there is ofcourse the memory increase here. Where we normally rely on a single tringular matrix for self-attention, we now need to allocate a matrix of size `B x context_length^2`.
+It's not a complete free lunch though - there is ofcourse the memory increase here. Where we normally rely on a single boolean tringular matrix for self-attention over a whole batch, we now will need an individual mask per sample. That can stack up when using, for example, ALiBi positional encodings where the mask is required to be in some higher precision than bit-level.
 
 # Closing Thoughts
 Packing increases the effective batch size, allowing us to forward more samples through the model and converge quicker. To maximize the performance when using packing:
@@ -95,3 +93,5 @@ I've created an implementation of the attention forward pass with a packed and p
 [^6]: Listen the `end-of-document` token is not a bad idea and in theory all tokens communicate through multi-headed masked attention, probably something that works better at scale.
 [^8]: https://transformer-circuits.pub/2021/framework/index.html#residual-comms
 [^10]: [Transformer Language Models without Positional Encodings Still Learn Positional Information](https://aclanthology.org/2022.findings-emnlp.99.pdf)
+
+
