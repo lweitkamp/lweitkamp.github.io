@@ -1,6 +1,6 @@
 ---
 title: "Packing"
-date: 2023-06-01
+date: 2023-05-01
 draft: false
 ---
 When training a transformer model we set the context length and fix it - every sequence in the dataset is either truncated or padded to fit the context length. Truncation is fine, but padding a sequence to fit the context length is a waste of tokens. We essentially fill the sequence with a specific token and ignore those tokens during the loss calculation. In this post I will discuss an approach that reduces padding called *packing*.
