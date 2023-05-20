@@ -37,7 +37,7 @@ markup:
         guessSyntax: true
         lineNos: true
         # noClasses: false
-        style: solarized-dark
+        style: gruvbox-light
         #lineNos: false
 
 

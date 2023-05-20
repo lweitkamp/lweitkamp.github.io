@@ -4,7 +4,8 @@
     --secondary: rgba(0, 0, 0, 0.88);
     --tertiary: rgba(0, 0, 106, 0.16);
     --content: rgba(0, 0, 60, 0.88);
-    --hljs-bg: #1c1d21;
+    /* --hljs-bg: rgba(36, 74, 19, 0.88); */
+    --hljs-bg: rgba(66, 1, 4, 0.88);
     --code-bg: #f5f5f5;
     --border: #eee;
 }
