@@ -4,6 +4,9 @@ title: Laurens Weitkamp
 theme: "PaperMod"
 
 params:
+
+    hideSummary: true
+    
     math: true
 
     # social media metadata
