@@ -27,6 +27,34 @@ Both KV cache and MQA are discussed/proposed in the paper [Fast Transformer Deco
 
 # How it Works
 
+We embed our batched sequences of tokens $X$ and calculate query, key and value tensors $Q, K, V$ respectively. This involves:
+
+$$
+\begin{align}
+X &= n_\text{batch} \times n_\text{tokens} \times d_\text{model} \\\
+Q, K, V &= d_\text{model} \times n_\text{heads} \times d_\text{head} &= d_\text{model} \times d_\text{model}
+\end{align}
+$$
+
+| Tensor | Name    | Storage | Compute |
+| ------ | ------- | --------------- | ----------- |
+| $X$    | Tokens                | $n_\text{batch} \cdot n_\text{tokens} \cdot d_\text{model}$ | --- |
+| $Q$    | Queries               | $n_\text{batch} \cdot n_\text{tokens} \cdot d_\text{model}$ |
+| $K$    | Keys                  | $n_\text{batch} \cdot n_\text{tokens} \cdot d_\text{model}$ |
+| $V$    | Values                | $n_\text{batch} \cdot n_\text{tokens} \cdot d_\text{model}$ |
+| $L$    | Self-attention Logits | $n_\text{batch} \cdot d_\text{head} \cdot {n_\text{tokens}}^2$ |
+| $O$    | ... | $$ |
+| $Y$    | ... | $n_\text{batch} \cdot n_\text{tokens} \cdot d_\text{model}$ |
+
+With reasonable assumptions[^1], the total number of ops to calculate $Q, K, V$ is $n_\text{batch} \cdot n_\text{tokens} \cdot d_\text{head}^2$,
+
+Focusing on the self-attention layer, we can state the following:
+
+- Compute/arithmetic operations are worst-case bounded by the calculation of queries, keys and values matrices, a process where we multiply our input sequence of embedded 
+
+ $\Omega(bnd^2)$, since $Q, K, V$ matrices 
+
+
 translating from the paper to our notation;
 - $m = n = n_\text{tokens}$
 - $k = v = d_\text{head}$ 
@@ -44,3 +72,6 @@ Caching seems like a smart thing to do, but we have to think about device utiliz
 
 - ROOFLINE PLOT
 
+
+
+[^1]: $d_\text{head} = \frac{n_\text{heads}}{d_\text{model}}$ and $n_\text{tokens} \leq d_\text{model}$. Are these still reasonable assumptions to have? The former probably is, but as for the latter...
