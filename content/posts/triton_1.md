@@ -1,8 +1,15 @@
 ---
 title: "Triton Tutorial 1: Vector Addition"
-date: 2023-08-01
+date: 2023-08-02
 draft: false
 ---
+
+This is part 1 of a tutorial series. Find the other parts here:
+
+- [Part 0: Introduction](https://lweitkamp.github.io/posts/triton_0/)
+- [Part 1: Vector Addition](https://lweitkamp.github.io/posts/triton_1/)
+
+# Introduction
 
 In this exercise we will create a very simple vector addition kernel in Triton. Vector addition in PyTorch is as simple as 
 ```python
@@ -13,8 +20,10 @@ y = randn(7)
 out = x + y  # vector addition
 ```
 This exercise is intended to familarize yourself with the basics of Triton and the Triton language.
-## The Vector Addition Kernel
+
+# The Vector Addition Kernel
 If you have read the introduction[^1], you now know that Triton implements *blocked algorithms*. If we have two vectors of size 7 and a `BLOCK_SIZE` of 3, we will end up with `triton.cdiv(7, 3)` = 3 parallel programs, where each program works on a chunk of the data:
+
 ![Two sequences "packed".](/img/triton/triton_lang_blocked.svg)
 
 In the Triton kernel we can check what chunk we are working on with the program ID variable `triton_language.program_id(axis=0)`[^3], which will evaluate <span style="background-color:#f4ccccff">pid=0</span>, <span style="background-color:#d9ead3ff">pid=1</span> and <span style="background-color:#d9d2e9ff">pid=2</span>. This is pretty straightforward, if you have experience with CUDA it will feel similar to `idx = blockIdx.x + threadIdx.x`.
@@ -22,7 +31,8 @@ In the Triton kernel we can check what chunk we are working on with the program 
 Where it does differ greatly from CUDA is that we can load and store data using a tensor/list of pointers. For example, to load the block of data required for <span style="background-color:#f4ccccff">pid=0</span>, we create a range of values from 0 to `BLOCK_SIZE` and add the starting index of the block (`pid * BLOCK_SIZE`) to it, resulting in <span style="background-color:#f4ccccff">offsets=[0, 1, 2]</span>. Retrieving the block values from an input vector is then as simple as adding its pointer to the offsets: `triton_language.load(ptr_to_first_vector + offsets)`. This will load the first block completely into super fast SRAM, allowing the hardware to perform fast math operations before storing it again back to DRAM using `triton_language.store(ptr_to_output_vector + offsets)`. The docs for both [load](https://triton-lang.org/main/python-api/generated/triton.language.load.html#triton-language-load) and [store](https://triton-lang.org/main/python-api/generated/triton.language.store.html#triton-language-store) are considered required reading, there is a diverse set of input options here.
 
 You might figure out that the offsets for <span style="background-color:#d9d2e9ff">pid=2</span> will not make much sense, it will evaluate to <span style="background-color:#d9d2e9ff">offsets=[6, 7, 8]</span> - index 7 and 8 are out of bounds for a vector of size 7. To avoid accessing out-of-bound memory, both the load and the store functions have a `mask` argument. We can pass a bool/int1 tensor here that should be the same length as `BLOCK_SIZE` with 1's indicating valid memory. Triton will simply not load/store anything where the mask is 0'd out.
-## Launching the Kernel
+
+# Launching the Kernel
 With the kernel loading the data to SRAM, adding the blocks together, and storing it back to DRAM finished, we can now look into how we actually call the kernel. First, the kernel needs a specific just-in-time decorator: `triton.jit`. This decorator does a lot of work, lets read the [docs](https://triton-lang.org/main/python-api/generated/triton.jit.html#triton.jit):
 
 > Note: When a jit’d function is called, arguments are implicitly ***converted to pointers*** if they have a `.data_ptr()` method and a .dtype attribute. 
@@ -51,7 +61,7 @@ def f(x, y):
 	return out
 ```
 The syntax felt a bit funky to me, but Numba does basically [the same](https://numba.pydata.org/numba-doc/dev/cuda/kernels.html). We will dive deeper into the launch grid in subsequent exercises, it turns out that we can define the grid in many different ways.
-## Exercise
+# Exercise
 Implement the vector addition kernel and the launch function in [vector_addition_kernel.py](https://github.com/lweitkamp/triton_tutorial/blob/main/vector_addition/vector_addition_kernel.py). If you get stuck, solutions can also be found in the [solutions branch](https://github.com/lweitkamp/triton_tutorial/tree/solutions) - but for this exercise you should not need it. After you are done coding, run the test case to ensure that the results of the Triton kernel are equal to that of a native PyTorch vector addition. You can run [vector_addition_benchmark.py](https://github.com/lweitkamp/triton_tutorial/blob/main/vector_addition/vector_addition_benchmark.py) and it should look a bit as follows:
 
 ...
