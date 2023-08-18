@@ -4,10 +4,10 @@ date: 2023-08-02
 draft: false
 ---
 
-This is part 1 of a tutorial series. Find the other parts here:
+This is part 1 of a tutorial series on Triton. Find the other parts here:
 
-- [Part 0: Introduction](https://lweitkamp.github.io/posts/triton_0/)
-- [Part 1: Vector Addition](https://lweitkamp.github.io/posts/triton_1/)
+- [Part 0: Introduction](https://lweitkamp.github.io/posts/triton_tutorial_0_introduction/)
+- [Part 1: Vector Addition](https://lweitkamp.github.io/posts/triton_tutorial_1_vector_addition/)
 
 # Introduction
 
