@@ -42,12 +42,10 @@ main#content figure {
 }
 
 main#content figure img {
-    max-width: 108%;
+    max-width: 90%;
 }
 
 main#content pre {
-    width: 108%;
-    margin-left: -3.8%;
-    padding: 1.5rem 2.2rem;
+    width: 90%;
 }
 }
