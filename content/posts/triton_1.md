@@ -52,7 +52,7 @@ def f(x, y):
 ```
 The syntax felt a bit funky to me, but Numba does basically [the same](https://numba.pydata.org/numba-doc/dev/cuda/kernels.html). We will dive deeper into the launch grid in subsequent exercises, it turns out that we can define the grid in many different ways.
 ## Exercise
-Implement the vector addition kernel and the launch function [here](...). If you get stuck, solutions can also be found in a branch [here](...) - but for this exercise you should not need it. After you are done coding, run the test case to ensure that the results of the Triton kernel are equal to that of a native PyTorch vector addition. You can run the benchmark ... and it should look a bit as follows:
+Implement the vector addition kernel and the launch function in [vector_addition_kernel.py](https://github.com/lweitkamp/triton_tutorial/blob/main/vector_addition/vector_addition_kernel.py). If you get stuck, solutions can also be found in the [solutions branch](https://github.com/lweitkamp/triton_tutorial/tree/solutions) - but for this exercise you should not need it. After you are done coding, run the test case to ensure that the results of the Triton kernel are equal to that of a native PyTorch vector addition. You can run [vector_addition_benchmark.py](https://github.com/lweitkamp/triton_tutorial/blob/main/vector_addition/vector_addition_benchmark.py) and it should look a bit as follows:
 
 ...
 
