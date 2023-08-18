@@ -1,7 +1,7 @@
 baseURL: http://example.org/
 languageCode: en-us
 title: Laurens Weitkamp
-theme: "PaperMod"
+theme: "etch"
 
 params:
 
@@ -12,10 +12,6 @@ params:
     # social media metadata
     env: production
 
-    # ShowBreadCrumbs: true
-    homeInfoParams:
-        Title: Work In Progress 🔧
-        Content: ...
 
     # Table of content stuff
     ShowToc: true
@@ -35,13 +31,13 @@ markup:
         renderer:
             unsafe: true
     highlight:
-        # anchorLineNos: true
+        lineNumbersInTable: false
+        anchorLineNos: true
         codeFences: true
         guessSyntax: true
         lineNos: true
-        # noClasses: false
-        style: gruvbox-light
-        #lineNos: false
+        style: monokailight
+
 
 
 # Menu
@@ -51,7 +47,4 @@ menu:
       name: Post Archive
       url: /posts/
       weight: 10
-    - identifier: Optimizing Transformers Series
-      name: Optimizing Transformers Series
-      url: /optimizing_transformers/
-      weight: 20
+
