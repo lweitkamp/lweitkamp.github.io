@@ -101,14 +101,15 @@ y = f(torch.randn(7), torch.randn(7))
 ```
 
 ## The Launch Grid
-
-
-> TODO: is the launch grid value theBLOCK_SIZE or the NUMBER OF THREADS TO RUN?
-
 From the snippet above, only the *launch grid* should look new.
-This is also the result of `triton.jit`; it will add a dictionary-style input argument to the kernel function that defines the `BLOCK_SIZE` we have used above but simply refered to a constant.
+This is the result of `triton.jit`; it will add a dictionary-style input argument to the kernel function that defines the number of kernels we run in parallel.
 In it's simplest form, the launch grid is a tuple of integers, where each integer defines the number of kernel instances to launch in parallel for each axis.
-Since we have a 1D problem, the launch grid is a tuple with a single integer value: 3 for the number of blocks we have to launch.
+Since we have a 1D problem, the launch grid is a tuple with a single integer value.
+
+
+If we have a defined `BLOCK_SIZE`, it makes a lot of sense to split the input vectors into blocks of size `BLOCK_SIZE` and run a kernel on each block.
+If there are not enough cores to run all the blocks in parallel, Triton will automatically schedule the blocks in a way that all cores are used as much as possible.
+In the example above, the vectors are of size 7 and `BLOCK_SIZE` is 3, so we will run 3 kernels in parallel, where each kernel processes 3 elements.
 
 
 The syntax felt a bit funky to me, but Numba does basically [the same](https://numba.pydata.org/numba-doc/dev/cuda/kernels.html). We will dive deeper into the launch grid in subsequent assignments, it turns out that we can define the grid in many different ways.
