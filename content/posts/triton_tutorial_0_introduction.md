@@ -15,7 +15,14 @@ I wanted to learn Triton but the documentation is a bit sparse and the examples 
 So I decided to change some of the examples into homework-like assignments to be completed, and added some more exercises to it.
 The exercises lead up to an implementation of flash attention in Triton that is wrapped in a PyTorch layer.
 
+## Structure
+Each assignment has two components: (1) a theory section where we go through some of the Triton concepts, and (2) an implementation section where we implement a kernel in Triton.
+
 # What is Triton
+In Triton, as in CUDA, we write a function that is executed on the GPU called a *kernel*.
+The difference however from CUDA is that kernels in Triton work on blocks of data, not on individual elements.
+That would appear to be a minor difference, but it has a lot of implications for how we write kernels, and it makes some stuff
+*so much easier*.
 
 # Reading List
 The website has some good getting-started documentation:
