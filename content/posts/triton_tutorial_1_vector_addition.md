@@ -48,7 +48,20 @@ def f_kernel(x_ptr, y_ptr, out_ptr):
 out = torch.empty(7)
 f_kernel(torch.randn(7), torch.randn(7), out)
 ```
-We decorate the `f_kernel` function with `triton.jit`, which will let Triton just-in-time compile it and will subsequently call it with three tensors. The input arguments are implicitly converted to pointers to their first element if they are tensors.
+We decorate the `f_kernel` function with `triton.jit`, which will let Triton just-in-time compile it and will subsequently call it with three tensors. The input arguments are implicitly converted to pointers to their first element if they are tensors. the JIT decorator adds a lot of variables here:
+
+| Parameter | Explanation |
+| :-------- | :---------- |
+| `num_warps` | the number of warps to use for the kernel when compiled for GPUs. For example, if num_warps=8, then each kernel instance will be automatically parallelized to cooperatively execute using 8 * 32 = 256 threads. [Here](https://softwareengineering.stackexchange.com/a/369978) is a nice stackoverflow explainer. [from Triton Config](https://triton-lang.org/main/python-api/generated/triton.Config.html). |
+| `num_ctas` | An integer denoting the number of *Cooperative Thread Arrays* active. Think of a CTA as a set of warps for now. In NVIDIA terms it is a block, but that term is a bit confusing in a blocked algorithm discussion. |
+| `num_stages` |  the number of stages that the compiler should use when software-pipelining loops. Mostly useful for matrix multiplication workloads on SM80+ GPUs (A100s).  [from Triton Config](https://triton-lang.org/main/python-api/generated/triton.Config.html) and [an explainer](https://github.com/openai/triton/discussions/512#discussioncomment-2732003) by the author of Triton. |
+| `enable_warp_specialization` | Enables [warp specialization](https://github.com/NVIDIA/cutlass/blob/main/media/docs/efficient_gemm.md#warp-specialization). |
+| `extern_libs` | An optional dictionary with name of library as key and path to library as value. Triton jitted kernels are limited in operations they can perform. We can load in externals libraries that have math functions not included in the basic Triton package. [From Triton docs](https://triton-lang.org/main/getting-started/tutorials/07-math-functions.html). | 
+| `stream` | The [PyTorch CUDA stream explainer](https://pytorch.org/docs/stable/notes/cuda.html#cuda-streams) might be helpful. | 
+| `device` | If none, will fetch the current device `torch.cuda.current_device()`, otherwise expects an integer index to set as device using `torch.cuda.set_device(idx)` |
+| `device_type` | A string denoting the device type (typically 'cuda') |
+
+Note that at the time of writing documentation is a bit sparse on these parameters. If you want to dive deeper, look at this [code block](https://github.com/openai/triton/blob/a7b40a10f98a748256c69cdc9efc742fc9617899/python/triton/runtime/jit.py#L365C1-L365C1). We won't need most of these parameters for this tutorial series, but it's good to know they exist.
 
 ## Whoami
 In the Triton kernel we can check what block of data we are working on with the program ID variable [`triton_language.program_id(axis=0)`](https://triton-lang.org/main/python-api/generated/triton.language.program_id.html#triton.language.program_id), which will evaluate <span style="background-color:#f4ccccff">pid=0</span>, <span style="background-color:#d9ead3ff">pid=1</span> and <span style="background-color:#d9d2e9ff">pid=2</span>.
@@ -119,7 +132,7 @@ Implement the vector addition kernel and the launch function in [vector_addition
 
 ![Benchmark results of the vector addition kernel. The figure depicts two curves very close to eachother.](/img/triton/vector-add-performance.png)
 
-It's very easy to get peak cuBLAS-like performance for vector addition, since vector adition is [bandwidth-bound](https://forums.developer.nvidia.com/t/sequential-code-is-faster-than-parallel-how-is-it-possible/44165/2)[^1]: vector addition for a vector of size N takes N arithmetic operations, but 3N memory operations (2 reads, 1 write). For now, don't worry about the benchmarking code, we will cover that in a future assignment.
+It's very easy to get peak cuBLAS-like performance for vector addition, since vector adition is bandwidth-bound[^1]: vector addition for a vector of size N takes N arithmetic operations, but 3N memory operations (2 reads, 1 write). For now, don't worry about the benchmarking code, we will cover that in a future assignment.
 
 
-[^1]: This post is by Robert Crovella who also teaches the basics of CUDA in the [Oak Ridge CUDA training series](https://www.olcf.ornl.gov/cuda-training-series/), a recommend if you want to get started on CUDA.
+[^1]: [This post by Robert Crovella](https://forums.developer.nvidia.com/t/sequential-code-is-faster-than-parallel-how-is-it-possible/44165/2) explains it in more detail. He also teaches the basics of CUDA in the [Oak Ridge CUDA training series](https://www.olcf.ornl.gov/cuda-training-series/), a recommend if you want to get started on CUDA but also good to get a beter understanding of NVIDIA GPUs.
