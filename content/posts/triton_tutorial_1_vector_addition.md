@@ -32,7 +32,7 @@ For a vector addition kernel, the inputs will hence be three vectors: `x`, `y`, 
 The kernel  will load the datafrom `x` and `y`, add them together, and store the result in `out`.
 If you have read the introduction[^1], you now know that Triton implements *blocked algorithms*. If we have two vectors of size 7 and a `BLOCK_SIZE` of 3, we will end up with `triton.cdiv(7, 3)` = 3 parallel programs, where each program works on a chunk of the data:
 
-![Two sequences "packed".](/img/triton/triton_lang_blocked.svg)
+![An example of blocks of size three on two vectors, both of size 7. The first vector spells "T R I T O N L", the second spells "A N G U A G E".](/img/triton/triton_lang_blocked.svg)
 
 ## JIT
 A function can be turned into a triton kernel simply by decorating it with [`triton.jit`](https://triton-lang.org/main/python-api/generated/triton.jit.html#triton.jit). The following code snippet is an example:
@@ -115,7 +115,11 @@ In the example above, the vectors are of size 7 and `BLOCK_SIZE` is 3, so we wil
 The syntax felt a bit funky to me, but Numba does basically [the same](https://numba.pydata.org/numba-doc/dev/cuda/kernels.html). We will dive deeper into the launch grid in subsequent assignments, it turns out that we can define the grid in many different ways.
 
 # The Assignment
-Implement the vector addition kernel and the launch function in [vector_addition_kernel.py](https://github.com/lweitkamp/triton_tutorial/blob/main/vector_addition/vector_addition_kernel.py). If you get stuck, solutions can also be found in the [solutions branch](https://github.com/lweitkamp/triton_tutorial/tree/solutions) - but for this assignment you should not need it. After you are done coding, run the test case to ensure that the results of the Triton kernel are equal to that of a native PyTorch vector addition. You can run [vector_addition_benchmark.py](https://github.com/lweitkamp/triton_tutorial/blob/main/vector_addition/vector_addition_benchmark.py) and it should look a bit as follows:
+Implement the vector addition kernel and the launch function in [vector_addition_kernel.py](https://github.com/lweitkamp/triton_tutorial/blob/main/vector_addition/vector_addition_kernel.py). If you get stuck, solutions can also be found in the [solutions branch](https://github.com/lweitkamp/triton_tutorial/tree/solutions) - but for this assignment you should not need it. After you are done coding, run [vector_addition_test.py](https://github.com/lweitkamp/triton_tutorial/blob/main/vector_addition/vector_addition_test.py) to ensure that the results of the Triton kernel are equal to that of a native PyTorch vector addition. You can run [vector_addition_benchmark.py](https://github.com/lweitkamp/triton_tutorial/blob/main/vector_addition/vector_addition_benchmark.py) and it should look a bit as follows:
 
-...
+![Benchmark results of the vector addition kernel. The figure depicts two curves very close to eachother.](/img/triton/vector-add-performance.png)
 
+It's very easy to get peak cuBLAS-like performance for vector addition, since vector adition is [bandwidth-bound](https://forums.developer.nvidia.com/t/sequential-code-is-faster-than-parallel-how-is-it-possible/44165/2)[^1]: vector addition for a vector of size N takes N arithmetic operations, but 3N memory operations (2 reads, 1 write). For now, don't worry about the benchmarking code, we will cover that in a future assignment.
+
+
+[^1]: This post is by Robert Crovella who also teaches the basics of CUDA in the [Oak Ridge CUDA training series](https://www.olcf.ornl.gov/cuda-training-series/), a recommend if you want to get started on CUDA.
