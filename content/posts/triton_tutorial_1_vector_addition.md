@@ -5,14 +5,16 @@ draft: false
 ---
 
 This is part 1 of a tutorial series on Triton. Find the other parts here:
-
-- [Part 0: Introduction](https://lweitkamp.github.io/posts/triton_tutorial_0_introduction/)
-- [Part 1: Vector Addition](https://lweitkamp.github.io/posts/triton_tutorial_1_vector_addition/)
+- [Part 0: Introduction]({{< ref "triton_tutorial_0_introduction" >}})
+- [Part 1: Vector Addition]({{< ref "triton_tutorial_1_vector_addition" >}})
+- [Part 2: Softmax]({{< ref "triton_tutorial_2_softmax" >}})
+- [Part 3: Blocked Sum Reduction]({{< ref "triton_tutorial_3_blocked_sum_reduction" >}})
+- [Part 4: Matrix Multiplication]({{< ref "triton_tutorial_4_matrix_multiplication" >}})
 
 # Introduction
-
 In this assignment we will create a very simple vector addition kernel in Triton.
 Vector addition in PyTorch is as simple as:
+
 ```python
 import torch
 
@@ -32,7 +34,8 @@ For a vector addition kernel, the inputs will hence be three vectors: `x`, `y`, 
 The kernel  will load the datafrom `x` and `y`, add them together, and store the result in `out`.
 If you have read the introduction[^1], you now know that Triton implements *blocked algorithms*. If we have two vectors of size 7 and a `BLOCK_SIZE` of 3, we will end up with `triton.cdiv(7, 3)` = 3 parallel programs, where each program works on a chunk of the data:
 
-![An example of blocks of size three on two vectors, both of size 7. The first vector spells "T R I T O N L", the second spells "A N G U A G E".](/img/triton/triton_lang_blocked.svg)
+
+{{< figure src="/img/triton/triton_lang_blocked.svg" caption="An example of blocks of size three on two vectors, both of size 7. The first vector spells 'T R I T O N L', the second spells 'A N G U A G E'." >}}
 
 ## JIT
 A function can be turned into a triton kernel simply by decorating it with [`triton.jit`](https://triton-lang.org/main/python-api/generated/triton.jit.html#triton.jit). The following code snippet is an example:
@@ -63,8 +66,8 @@ We decorate the `f_kernel` function with `triton.jit`, which will let Triton jus
 
 Note that at the time of writing documentation is a bit sparse on these parameters. If you want to dive deeper, look at this [code block](https://github.com/openai/triton/blob/a7b40a10f98a748256c69cdc9efc742fc9617899/python/triton/runtime/jit.py#L365C1-L365C1). We won't need most of these parameters for this tutorial series, but it's good to know they exist.
 
-## Whoami
-In the Triton kernel we can check what block of data we are working on with the program ID variable [`triton_language.program_id(axis=0)`](https://triton-lang.org/main/python-api/generated/triton.language.program_id.html#triton.language.program_id), which will evaluate <span style="background-color:#f4ccccff">pid=0</span>, <span style="background-color:#d9ead3ff">pid=1</span> and <span style="background-color:#d9d2e9ff">pid=2</span>.
+## Program Identifier
+When a kernel launches, several programs will be run in parallel. We can check what block of data this specific program is working on with the program ID variable [`triton_language.program_id(axis=0)`](https://triton-lang.org/main/python-api/generated/triton.language.program_id.html#triton.language.program_id), which will evaluate <span style="background-color:#f4ccccff">pid=0</span>, <span style="background-color:#d9ead3ff">pid=1</span> and <span style="background-color:#d9d2e9ff">pid=2</span>.
 We use the program ID variable to create offsets in the tensors we work on. It is similar to how we would do this in CUDA: `idx = blockIdx.x + threadIdx.x`, but the big difference is that the offsets are lists/tensors in Triton, **not scalars**.
 Since we are working on a simple vector multiplication operation, the offsets are only dependent on the program ID and the chosen `BLOCK_SIZE` constant:
 
