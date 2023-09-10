@@ -47,4 +47,7 @@ menu:
       name: Post Archive
       url: /posts/
       weight: 10
-
+    - identifier: Triton Exercises
+      name: Triton Exercises
+      url: /triton_exercises/
+      weight: 20

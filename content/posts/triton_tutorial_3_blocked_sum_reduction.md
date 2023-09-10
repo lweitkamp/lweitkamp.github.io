@@ -5,7 +5,6 @@ draft: false
 ---
 
 This is part 3 of a tutorial series on Triton. Find the other parts here:
-- [Part 0: Introduction]({{< ref "triton_tutorial_0_introduction" >}})
 - [Part 1: Vector Addition]({{< ref "triton_tutorial_1_vector_addition" >}})
 - [Part 2: Softmax]({{< ref "triton_tutorial_2_softmax" >}})
 - [Part 3: Blocked Sum Reduction]({{< ref "triton_tutorial_3_blocked_sum_reduction" >}})
@@ -59,8 +58,6 @@ Note that [`tl.load`](https://triton-lang.org/main/python-api/generated/triton.l
 - boundary check
 - offsets
 
-That's it! 
-
 # Autotuning In Triton
 The algorithms implemented so far seem to give a pretty solid performance when compared to built-in pytorch.
 That's even more impressive when we consider the fact that we did not do any parameter tuning at all.
@@ -106,6 +103,10 @@ def kernel(x_ptr, x_size, **META):
  -->
 
 # The Assignment
+Implement a kernel that performs a sum reduction along the first axis of an M by N matrix. The following steps will be required:
+
+- ...
+
 
 
 ## Citations

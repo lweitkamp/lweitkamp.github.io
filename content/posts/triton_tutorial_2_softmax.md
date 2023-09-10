@@ -5,7 +5,6 @@ draft: false
 ---
 
 This is part 2 of a tutorial series on Triton. Find the other parts here:
-- [Part 0: Introduction]({{< ref "triton_tutorial_0_introduction" >}})
 - [Part 1: Vector Addition]({{< ref "triton_tutorial_1_vector_addition" >}})
 - [Part 2: Softmax]({{< ref "triton_tutorial_2_softmax" >}})
 - [Part 3: Blocked Sum Reduction]({{< ref "triton_tutorial_3_blocked_sum_reduction" >}})
