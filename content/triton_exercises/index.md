@@ -2,23 +2,18 @@
 title: "Triton Exercises"
 ---
 
-1. [Vector Addition]({{< ref "triton_tutorial_1_vector_addition" >}})
-2. [Softmax]({{< ref "triton_tutorial_2_softmax" >}})
-3. [Blocked Sum Reduction]({{< ref "triton_tutorial_3_blocked_sum_reduction" >}})
-4. [Matrix Multiplication]({{< ref "triton_tutorial_4_matrix_multiplication" >}})
+These exercises are meant to help you get started with Triton. It's currently a work in progress, but feel free to start with the first section. The following is the table of content for content-to-be:
 
-# Introduction
-Each assignment has two components: (1) a post about the basics of the problem we are trying to solve and explanation of some related triton functions and (2) a python file to implement the kernel. We largely follow the structure of the triton examples on the website and deviate here and there to introduce some concepts sooner or later.
-
-# What is Triton
-In Triton, as in CUDA, we write a function that is executed on the GPU called a *kernel*.
-The difference however from CUDA is that kernels in Triton work on blocks of data, not on individual elements.
-That would appear to be a minor difference, but it has a lot of implications for how we write kernels, and it makes some stuff
-*so much easier*.
+1. [Getting Started]({{< ref "triton_exercise_1_getting_started" >}}) - a sequence of small exercises to learn the basics of Triton.
+2. [Optimization and Benchmarking]({{< ref "triton_exercise_2_benchmarking" >}}) - on measuring and optimizing the performance of triton kernels.
+3. Blocked Softmax - a softmax for tensors where rows *do not* fit into SRAM.
+4. Matrix Multiplication - this one follows the Triton tutorial, and is necessary for building understanding of exercise 5.
+5. Flash Attention - Probably using alibi, or some non-default attention mechanism.
 
 ## The Sharp Bits
-- Essentially any shape has to be a power of 2
-- 
+Triton is very much a work in progress, and can throws errors here and there without much description. Probably sometime soon in the future it will be much easier to work with, but for now watch out for some common errors:
+- **everything** should be a power of two to work properly.
+- `tl.reshape` is not implemented yet, and `tl.view` is unstable.
 
 # Reading List
 The website has some good getting-started documentation:

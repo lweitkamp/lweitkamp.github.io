@@ -1,14 +1,10 @@
 ---
-title: "Triton Tutorial 4: Matrix Multiplication"
+title: "Triton Exercise 4: Matrix Multiplication"
 date: 2023-08-05
-draft: false
+draft: true
 ---
 
-This is part 4 of a tutorial series on Triton. Find the other parts here:
-- [Part 1: Vector Addition]({{< ref "triton_tutorial_1_vector_addition" >}})
-- [Part 2: Softmax]({{< ref "triton_tutorial_2_softmax" >}})
-- [Part 3: Blocked Sum Reduction]({{< ref "triton_tutorial_3_blocked_sum_reduction" >}})
-- [Part 4: Matrix Multiplication]({{< ref "triton_tutorial_4_matrix_multiplication" >}})
+
 
 # Introduction
 <!-- {{< figure src="/img/triton/matmul.svg" caption="Fig 1. A program takes a row of matrix A (red) and multiplies it with a column of matrix B (green). The result is a single value in the output matrix C." >}} -->

@@ -1,14 +1,9 @@
 ---
-title: "Triton Tutorial 2: Blocked Softmax"
+title: "Triton Exercise 2: Blocked Softmax"
 date: 2023-08-03
-draft: false
+draft: true
 ---
 
-This is part 2 of a tutorial series on Triton. Find the other parts here:
-- [Part 1: Vector Addition]({{< ref "triton_tutorial_1_vector_addition" >}})
-- [Part 2: Softmax]({{< ref "triton_tutorial_2_softmax" >}})
-- [Part 3: Blocked Sum Reduction]({{< ref "triton_tutorial_3_blocked_sum_reduction" >}})
-- [Part 4: Matrix Multiplication]({{< ref "triton_tutorial_4_matrix_multiplication" >}})
 
 # Introduction
 - We need to introduce the softmax operation and what it is used for

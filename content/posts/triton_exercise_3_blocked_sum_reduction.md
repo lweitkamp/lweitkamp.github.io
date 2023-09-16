@@ -1,14 +1,13 @@
 ---
-title: "Triton Tutorial 3: Blocked Sum Reduction"
+title: "Triton Exercise 3: Blocked Sum Reduction"
 date: 2023-08-04
-draft: false
+draft: true
 ---
 
-This is part 3 of a tutorial series on Triton. Find the other parts here:
-- [Part 1: Vector Addition]({{< ref "triton_tutorial_1_vector_addition" >}})
-- [Part 2: Softmax]({{< ref "triton_tutorial_2_softmax" >}})
-- [Part 3: Blocked Sum Reduction]({{< ref "triton_tutorial_3_blocked_sum_reduction" >}})
-- [Part 4: Matrix Multiplication]({{< ref "triton_tutorial_4_matrix_multiplication" >}})
+
+References for this exercise:
+
+- The [Triton tutorial on block pointers](https://triton-lang.org/main/getting-started/tutorials/08-experimental-block-pointer.html#make-a-block-pointer).
 
 # Introduction
 In the previous two assignments we could fit the entire problem into SRAM either because the solution was parallelizable or because the problem was small enough. That has some benefit, namely that pointer arithmetic is limited to just finding the offset into the input and output tensors. In this and future assignments this will not be the case, and to prepare a bit for that this assignment will give a gentle introduction to more advanced pointer arithmetic in Triton.
@@ -18,25 +17,50 @@ The task will be to implement a blocked sum reduction along the first axis[^1]. 
 {{< figure src="/img/triton/sum_blockify.svg" caption="Fig 1. Starting with a matrix of size N times M, the matrix is divided up into blocks of columns B_M (left). Each program will work on one such block, iterating over the block in the row dimension B_N and accumulating the intermediate sums (right)." >}}
 
 # Block Pointers
-For previous assignments, getting the offset would be something like `tl.arange(0, BLOCK_SIZE) + input_ptr + tl.program_id(0) * input_stride`. Imaging doing this when loading two dimensional blocks - not impossible but [not very pretty either](https://github.com/openai/triton/blob/main/python/triton/ops/matmul.py#L106). Triton has some new *experimental* functionality that makes this a bit easier. The approach uses *block pointers*:
+For previous assignments, getting the offset would be something like `tl.arange(0, BLOCK_SIZE) + input_ptr + tl.program_id(0) * input_stride`. Imaging doing this when loading two dimensional blocks - not impossible but [not very pretty either](https://github.com/openai/triton/blob/main/python/triton/ops/matmul.py#L106). Triton has some new *experimental* functionality that makes this a bit easier. The approach uses *block pointers*, which we can initiate with the [`make_block_ptr`](https://github.com/openai/triton/blob/main/python/triton/language/core.py#L1081-L1092) function:
 
 ```python
 block_ptr = tl.make_block_ptr(
-    base=input_ptr,                  # Pointer to the start of the tensor (x)
-    shape=(M, N),                    # Shape of the tensor (x.shape(0), x.shape(1))
-    strides=(stride_m, stride_n),    # Strides of the tensor (x.stride(0), x.stride(1))
-    offsets=(pid * BLOCK_M, 0),      # Offset of the block you want to load
+    base=input_ptr,                  # The base pointer to the parent tensor
+    shape=(M, N),                    # The shape of the parent tensor
+    strides=(stride_m, stride_n),    # The strides of the parent tensor
+    offsets=(pid * BLOCK_M, 0),      # The offsets to the block
     block_shape=(BLOCK_M, BLOCK_N),  # Shape of the block you want to load
     order=(1, 0),                    # The order of the original data format
 )
 ```
 
-Most of these arguments are self explanatory, but lets discuss `offsets` and `order` in more detail.
-- offsets
-- order
+Strides and offsets together decide where we starting loading the data from, and the block_shape argument sets the shape of the block in total. The order argument is not very explanatory, and the help from the docs above is also not too useful. A better explanation can be found in the [Triton tutorial on block pointers](https://triton-lang.org/main/getting-started/tutorials/08-experimental-block-pointer.html#make-a-block-pointer):
+> `order`: the order of the block, which means how the block is laid out in memory.
+>
+> [...]
+>
+> Note that the order argument is set to (1, 0), which means the second axis is the inner dimension in terms of storage, and the first axis is the outer dimension. This information may sound redundant, but it is necessary for some hardware backends to optimize for better performance.
+
+As a small side-effect of the block pointer mechanic, it is possible to load the matirx transposed by just changing the `shape` and the `block_shape` arguments (and changing `order` for a more effective layout). An example can be seen below where we have one input matrix of size M by N and we create two pointers to it, one that has a shape M by N, and one that load sit as N by M:
+
+```python
+a_block_ptr = tl.make_block_ptr(
+    base=input_ptr,
+    shape=(M, N),
+    strides=(stride_m, stride_n),
+    block_shape=(M, N),
+    offsets=(0, 0),
+    order=(1, 0),
+)
+a_transposed_block_ptr = tl.make_block_ptr(
+    base=input_ptr,
+    shape=(N, M),                    # Assume shape is N by M
+    strides=(stride_n, stride_m),    # Swap strides
+    block_shape=(N, M),              # Assume block is N by M
+    offsets=(0, 0),
+    order=(0, 1),                    # Order changed for efficiency (not required)
+)
+```
+That might seem a bit insignificant, but it will be useful later when we implement flash attention.
 
 
-Because we notify the block shape in [`make_block_ptr`](https://github.com/openai/triton/blob/main/python/triton/language/core.py#L1081-L1092), we don't have to use any masking when loading the data. All we need to do is notify what boundaries to check for invalid memory accesses. Advancing to the next block is also easy with the use of [`tl.advance`](https://github.com/openai/triton/blob/main/python/triton/language/core.py#L1096-L1103):
+Because we notify the block shape in `make_block_ptr`, we don't have to use any masking when loading the data. All we need to do is notify what boundaries to check for invalid memory accesses. Advancing to the next block is also easy with the use of [`tl.advance`](https://github.com/openai/triton/blob/main/python/triton/language/core.py#L1096-L1103):
 
 ```python
 # Load the data into sram
