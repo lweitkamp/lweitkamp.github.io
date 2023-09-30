@@ -2,7 +2,9 @@
 title: "Triton Exercises"
 ---
 
-These exercises are meant to help you get started with Triton. It's currently a work in progress, but feel free to start with the first section. The following is the table of content for content-to-be:
+These exercises are meant to help you get started with Triton.
+The exercises are focused on the python API and we will not spend much time discussing how Triton itself works, but mostly focus on how to use it.
+It's currently a work in progress, but feel free to start with the first section. The following is the table of content for content-to-be:
 
 1. [Getting Started]({{< ref "triton_exercise_1_getting_started" >}}) - a sequence of small exercises to learn the basics of Triton.
 2. [Optimization and Benchmarking]({{< ref "triton_exercise_2_benchmarking" >}}) - on measuring and optimizing the performance of triton kernels.
@@ -20,6 +22,10 @@ The website has some good getting-started documentation:
 - [Triton Installation Guide](https://triton-lang.org/main/getting-started/installation.html)
 - [Triton Introduction](https://triton-lang.org/main/programming-guide/chapter-1/introduction.html)
 - [Triton Related Work](https://triton-lang.org/main/programming-guide/chapter-2/related-work.html)
+
+There are also a number of good codebases that make use of Triton:
+- [Trident](https://github.com/kakaobrain/trident)
+- [xFormers](https://github.com/facebookresearch/xformers), although support seems to be fading.
 
 Further reading:
 - [Philippe Tillet's PhD](https://dash.harvard.edu/handle/1/37368966)
