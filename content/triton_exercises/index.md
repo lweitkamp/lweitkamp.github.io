@@ -24,8 +24,8 @@ The website has some good getting-started documentation:
 - [Triton Related Work](https://triton-lang.org/main/programming-guide/chapter-2/related-work.html)
 
 There are also a number of good codebases that make use of Triton:
-- [Trident](https://github.com/kakaobrain/trident)
-- [xFormers](https://github.com/facebookresearch/xformers), although support seems to be fading.
+- [Trident](https://github.com/kakaobrain/trident), fusing essentialy anything in a typical neural net.
+- [xFormers](https://github.com/facebookresearch/xformers), although mostly for flash attention and operator fusion.
 
 Further reading:
 - [Philippe Tillet's PhD](https://dash.harvard.edu/handle/1/37368966)
