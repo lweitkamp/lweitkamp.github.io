@@ -106,9 +106,9 @@ More important to know is that inside jitted functions you can only use basic py
 
 
 ### Program Identifier
-When you launch a Triton kernel you define a launch grid that specifies how many *programs* will be launched.
-Each of these programs has a unique identifier from `0` to `n_programs - 1` - in the vector addition above we essentially divided the vector by `BLOCK` and launched that many programs.
-If we take `N` to be 512 and the `BLOCK` value is 128, the launch grid will be `(4,)` and we will launch 4 programs.
+Before running a Triton kernel you first define a *launch grid* that specifies how many *programs* will be launched.
+Each of these programs has a unique identifier from `0` to `n_programs - 1` - in the vector addition above we divided the vector lenght by `BLOCK` and launched that many programs.
+If we take `N` to be 512 and `BLOCK` value is 128, the launch grid will be `N / BLOCK = (4,)` and we will launch 4 programs.
 Each program will have a unique identifier from `0` to `3` which you can retrieve with the [`tl.program_id`](https://triton-lang.org/main/python-api/generated/triton.language.program_id.html) function:
 
 {{< figure src="/img/triton/getting_started/vector_add.png" caption="Fig 1. Blocked Vector Addition. We define a vector length of 512, a block size of 128 and launch 4 individual programs that will work on 128 values of the input vectors each." >}}
