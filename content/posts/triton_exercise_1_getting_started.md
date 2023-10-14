@@ -102,25 +102,24 @@ SyntaxError: invalid syntax
 ```
 
 We will look at some of these in the next exercise, but you can mostly forget about them for now.
-More important to know is that inside jitted functions you can only use basic python operations and anything available in the [`triton.language`](https://triton-lang.org/main/python-api/triton.language.html).
+More important to know is that inside jitted functions you can only use basic python operations and anything available in [`triton.language`](https://triton-lang.org/main/python-api/triton.language.html).
 
 
 ### Program Identifier
 Before running a Triton kernel you first define a *launch grid* that specifies how many *programs* will be launched.
-Each of these programs has a unique identifier from `0` to `n_programs - 1` - in the vector addition above we divided the vector lenght by `BLOCK` and launched that many programs.
-If we take `N` to be 512 and `BLOCK` value is 128, the launch grid will be `N / BLOCK = (4,)` and we will launch 4 programs.
-Each program will have a unique identifier from `0` to `3` which you can retrieve with the [`tl.program_id`](https://triton-lang.org/main/python-api/generated/triton.language.program_id.html) function:
+Each of these programs has a unique identifier from `0` to `n_programs - 1`. In the vector addition above we divided the vector lenght by `BLOCK` and launched that many programs.
+For example: if we take `N` to be 512 and `BLOCK` value is 128, the launch grid will be `N / BLOCK = (4,)` and we will launch 4 programs, where program will have a unique identifier from `0` to `3` which you can retrieve with the [`tl.program_id`](https://triton-lang.org/main/python-api/generated/triton.language.program_id.html) function:
 
 {{< figure src="/img/triton/getting_started/vector_add.png" caption="Fig 1. Blocked Vector Addition. We define a vector length of 512, a block size of 128 and launch 4 individual programs that will work on 128 values of the input vectors each." >}}
 
-We will need to use the program identifier to figure out which block we are working on.
+We need the program identifier inside the kernel to figure out which block this program is supposed to work on.
 With a little bit of arithmetic, we can figure out that the correct offset for this program to work on is `program_id * BLOCK`, and we can broadcast that value on a `tl.range` of `BLOCK` to get pointers to all the block values. 
 This is exactly what was done in the kernel above!
 
 In most cases we will have a launch grid in 1D (even when working on 2D data) and hence one program identifier, but it can be multidimensional if that makes stuff easier for you, and you retrieve each axis accordingly with the `axis` argument.
 
 ### Block Pointers
-Throughout these exercises we will rely heavily on the block pointer mechanism of Triton instead of configuring the block pointers manually as we did above. Block pointers are still an experimental feature at the time of writing this, but it reduces the complexity of writing Triton kernels a lot. In fact, it mostly hides any last remnants of CUDA-like programming from the user. Creating block pointers over time will become second nature, most of the parameters are boilerplate:
+Throughout these exercises we will rely heavily on the block pointer mechanism of Triton instead of configuring the block pointers manually as we did above. Block pointers are still an experimental feature at the time of writing this, but it drastically reduces the complexity of writing Triton kernels. In fact, it mostly hides any last remnants of CUDA-like programming from the user. Creating block pointers over time will become second nature, most of the parameters are boilerplate:
 
 ```python
 import triton
@@ -128,14 +127,15 @@ import triton.language as tl
 
 @triton.jit
 def do_nothing(
-   X: tl.tensor,
+   inputs: tl.tensor,
+   inputs_stride_x,
    BLOCK: tl.constexpr,
 ):
    pid = tl.program_id(axis=0)
-   block_ptr_x = tl.make_block_ptr(
-      base=X,
+   block_ptr_inputs = tl.make_block_ptr(
+      base=inputs,
       shape=(512, ),
-      strides=(X.strides(0), ),
+      strides=(inputs_stride_x, ),
       offsets=(pid * BLOCK, ),
       block_shape=(BLOCK, ),
       order=(0, ),
@@ -144,20 +144,18 @@ def do_nothing(
 let's quickly describe the values:
 - `base` should point to the tensor's first value location in memory, so typically just the torch tensor you give as input.
 - `shape` should be the shape of the tensor that defines `base`.
-- `strides` should be the strides of the base tensor, and are typically just fed as `X.strides(0), X.strides(1), ..., X.strides(n - 1)`.
-- `offsets` is the primary variable of interest for the whole block pointer. It tells Triton where exactly the block we will work on starts. If the vector is of length 512 and program id is 1, Triton will calculate the starting point as `X.strides(0) * pid * BLOCK`.
+- `strides` should be the strides of the base tensor, and are typically just fed as `X.strides(0), X.strides(1), ..., X.strides(n - 1)` where `X` represents `inputs`.
+- `offsets` is the primary variable of interest for the whole block pointer. It tells Triton where exactly the block we will work on starts. If the vector is of length 512 and program id is 1, Triton will calculate the starting point as `inputs_stride_x * pid * BLOCK`.
 - `block_shape` is the shape of the block we will work on - pretty straightforward.
-- `order` is a tricky one[^4]. In general, you will always set it to `(n - 1, n - 2, ..., 0)`, but an explanation is given in the [block pointer tutorial](https://triton-lang.org/main/getting-started/tutorials/08-experimental-block-pointer.html#sphx-glr-getting-started-tutorials-08-experimental-block-pointer-py) regarding 2D block pointers:
+- `order` is a tricky one. In general, you will always set it to `(n - 1, n - 2, ..., 0)`[^4], but an explanation is given in the [block pointer tutorial](https://triton-lang.org/main/getting-started/tutorials/08-experimental-block-pointer.html#sphx-glr-getting-started-tutorials-08-experimental-block-pointer-py) regarding 2D block pointers:
    > Note that the order argument is set to (1, 0), which means the second axis is the inner dimension in terms of storage, and the first axis is the outer dimension. This information may sound redundant, but it is necessary for some hardware backends to optimize for better performance.
 
 If we evaluate the logic for `pid = 1`, we see that the offsets start at `128` and that the block itself will be of length `128` too spanning from `128` to `256`, this is reflected in Figure 2:
 
 {{< figure src="/img/triton/getting_started/vector_add_program_id.png" caption="Fig 2. Zoning in on `pid = 1`." >}}
 
-We can introduce a slightly more complicated 2D version where we want to work on a matrix of size M by N in blocks of `block_M = M // 2` and `block_N = N // 2`, so essentially diving it up into four again, but now in x and y direction. With `M = N = 512` and `block_M = block_N = 256`, Figure 3 demonstrates the matrix we will work on:
-
-{{< figure src="/img/triton/getting_started/matrix_blocked.png" caption="Fig 3. ddd." >}}
-
+#### 2D Block Pointers
+Block pointers can be expanded to higher dimension by expanding shape, strides, offset, block shape and order parameters. Let's give a small example of a 2D block pointer kernel where we take a `M = N = 32` matrix and divide it into four blocks, two per axis.
 
 ```python
 import triton
@@ -165,40 +163,97 @@ import triton.language as tl
 
 @triton.jit
 def do_nothing(
-   X: tl.tensor,
+   inputs: tl.tensor,
+   inputs_stride_x, inputs_stride_y,
    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr,
 ):
    pid_M = tl.program_id(axis=0)
    pid_N = tl.program_id(axis=1)
 
-   row_block_ptr_x = tl.make_block_ptr(
-      base=X,
-      shape=(512, 512),
-      strides=(X.strides(0), X.strides(1)),
-      offsets=(pid * BLOCK_M, 0),
+   input_block_ptr = tl.make_block_ptr(
+      base=inputs,
+      shape=(32, 32),
+      strides=(input_stride_x, input_stride_y),
+      offsets=(pid_M * BLOCK_M, pid_N * BLOCK_N),
       block_shape=(BLOCK_M, BLOCK_N),
       order=(1, 0),
-)
+   )
 ```
 
+Visually, it would correspond to figure 3 below.
+
+{{< figure src="/img/triton/getting_started/matrix_blocked.png" caption="Fig 3. On the left we see our input matrix of size 32 by 32. On the right we zone in on the block of size 16 by 16 on the second row and first column, corresponding to pid_N = 0 and pid_M = 1." >}}
 
 
-Note that Triton does not consider much type annotation, but values such as `block_shape` are **required** to be typed as constant expressions [`tl.constexpr`](https://github.com/openai/triton/blob/cb83b42ed6397d170ab539c9c0a99afff3971476/python/triton/language/core.py#L406).
+Note that block shapes should be typed as constant expressions [`tl.constexpr`](https://github.com/openai/triton/blob/cb83b42ed6397d170ab539c9c0a99afff3971476/python/triton/language/core.py#L406) since these values can be optimized for during compile time. If it's still a bit unclear how block pointers work don't worry - the exercises will clear it up.
+### Loading, Manipulating and Storing Data
+With block pointers ready we can start loading data from global memory to much faster shared memory. Triton provides the [`tl.load`](https://triton-lang.org/main/python-api/generated/triton.language.load.html) and [`tl.store`](https://triton-lang.org/main/python-api/generated/triton.language.store.html) functions for this. Since we use block pointers we can ignore most arguments in both loading and storing, but the docs do give us some information:
 
-### Loading and Storing Data
+> pointer could be a block pointer defined by make_block_ptr, in which case:
+> - mask and other must be None
+> - boundary_check and padding_option can be specified to control the behavior of out-of-bound access 
 
-### Basic Operations
+Ignoring the mask argument, we are left with `boundary_check` and `padding_option`. If `boundary_check` is enabled, out-of-bound memory can be set to a static value using `padding_option`. This approach is unfortunately not as versatile as the non-block pointer approach, since padding options are only `zero` and `nan`. As an example of where this hurts, the softmax tutorial in the documentation uses the old loading approach and here you can simply set out-of-bound values to `-inf`.
 
-### Some Sharp Bits
-Since Triton is still actively being developed, there are some sharp edges that you should be aware of:
-- **everything** should be a power of two to work properly.
-- `tl.reshape` is not implemented yet, and `tl.view` is unstable.
+We will continue the 2D example above and expand the intention to a max-pool operation for each block. That is, each program loads a block of 16 by 16 and calculates its maximum value. The output will be a 2 by 2 matrix. Because we are strictly loading quarters of the original tensor we probably don't need a boundary check and a padding value, but we will add both as an example.
+
+```python
+@triton.jit
+def maxpool_kernel(
+    input_ptr: tl.tensor, output_ptr: tl.tensor,
+    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr,    
+    input_stride_x, input_stride_y,
+    output_stride_x, output_stride_y,
+):
+    pid_M = tl.program_id(axis=0)
+    pid_N = tl.program_id(axis=1)
+
+    input_block_ptr = tl.make_block_ptr(
+        base=input_ptr,
+        shape=(32, 32),
+        strides=(input_stride_x, input_stride_y),
+        offsets=(pid_M * BLOCK_M, pid_N * BLOCK_N),
+        block_shape=(BLOCK_M, BLOCK_N),
+        order=(1, 0),
+    )
+    output_block_ptr = tl.make_block_ptr(
+        base=output_ptr,
+        shape=(2, 2),
+        strides=(output_stride_x, output_stride_y),
+        offsets=(pid_M, pid_N),
+        block_shape=(1, 1),
+        order=(1, 0),
+    )
+
+    input_block = tl.load(
+        input_block_ptr,
+        boundary_check=(0, 1),
+        padding_option="zero",
+    )
+
+    tl.store(output_block_ptr, tl.max(input_block))
+```
+
+Instead of [`tl.max`](https://triton-lang.org/main/python-api/generated/triton.language.max.html#triton.language.max) we could just as easily have used [`tl.sum`](https://triton-lang.org/main/python-api/generated/triton.language.sum.html#triton.language.sum). If we had two tensors we could've [`tl.dot`](https://triton-lang.org/main/python-api/generated/triton.language.sum.html#triton.language.sum)'ed them too. Check out the whole of [`triton.language`](https://triton-lang.org/main/python-api/triton.language.html), we will use a lot of these operations in due time.
+
+To run the kernel will require a sort of wrapper function that takes the input tensor(s), defines the output tensor in memory and runs the kernel with a proper launch grid. An example can be seen below.
+
+
+```python
+def maxpool(inputs: torch.Tensor) -> torch.Tensor:
+    outputs = torch.empty((2, 2), dtype=inputs.dtype, device=inputs.device)
+
+    maxpool_kernel[(2, 2)](
+        input_ptr=inputs, output_ptr=outputs,
+        BLOCK_M=16, BLOCK_N=16,
+        input_stride_x=inputs.stride(0), input_stride_y=inputs.stride(1),
+    )
+
+    return outputs
+```
 
 # Exercises
-The exercises are meant to familarize yourself with the following concepts:
-
-
-To start, we will work on some 'naive' kernels, where we have a single program that loads the entire matrix. We will slowly work towards loading blocks of the matrix instead and performing some math operations to transform them.
+The exercises are meant to familarize yourself with the concepts discussed above. To start, we will work on some 'naive' kernels, where we have a single program that loads the entire matrix. We will slowly work towards loading blocks of the matrix instead and performing some math operations to transform them. On the way we will implement the vector addition and softmax kernels discussed on the Triton documentation and a 2D sum kernel that introduces a new concept, [`tl.advance`](https://github.com/openai/triton/blob/cb83b42ed6397d170ab539c9c0a99afff3971476/python/triton/language/core.py#L1113).
 
 ## Copying Tensors: 1D Copy (naive)
 ## Copying Tensors: 2D Copy (naive)
