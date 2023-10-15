@@ -4,40 +4,10 @@ date: 2023-09-14
 draft: false
 ---
 
-This is part 1 of an exercise series on Triton. Find the other parts here:
+This is part 1 of an [exercise series on Triton]({{< ref "triton_exercises/index">}}). You can find the exercises on [GitHub](https://github.com/lweitkamp/triton_exercises) and find the other parts here:
 1. [Getting Started]({{< ref "triton_exercise_1_getting_started" >}}) - a sequence of small exercises to learn the basics of Triton.
 2. [Optimization and Benchmarking]({{< ref "triton_exercise_2_benchmarking" >}}) - on measuring and optimizing the performance of triton kernels.
 
-
-
-<!--  # CUDA in Ten Seconds
-
-To explain how Triton works, it helps a lot to know some of the basics of CUDA. In the CUDA programming paradigm you write *kernels* (written in CUDA-C) that are launched in C(++) code. Kernels are launched together with a launch grid, which specifies how many threads will work concurrently on the task. These threads are often grouped in a hierarchical fashion: threads are gathered in blocks which is placed somewhere in a grid - these are very important design decisions since they determine how and **if** threads can communicate with each other.
-
-When a kernel is launched, a thread can identify itself using `blockIdx.x/y/z` and `threadix.x/y/z`. Since blocks share SRAM, a typical workflow will look something like this:
-
-1. Identify the thread index, identify the block index.
-   ```c
-   block_index = blockIdx.x;
-   thread_index = threadIdx.x;
-   ```
-2. Load some values into a shared memory buffer. You will need to ensure that the thread index is not stepping on data outside the bounds of the data you want to load.
-   ```c
-   if (thread_index < data_dim) {
-        sram_buffer[thread_index] = load_some_data;
-   }
-   ```
-3. synchronize threads in the block to ensure that whatever you do next, all threads have done their work in loading data.
-   ```c
-   __syncthreads();
-   ```
-4. do some (thread-based scalar) computations on the shared data.
-   ```
-   
-   ```
-
-In a nutshell: CUDA is very fine-grained, you work on a thread level basis and you will compute on a thread level basis. Often times, you will need to have barrier synchronizations to ensure threads are in line with each other. We will not go much more in depth now but I recommend this post by Simon Boehm about [optimizing the matmul kernel](https://siboehm.com/articles/22/CUDA-MMM), which is one of the pain-points on CUDA: it is hard to get peak performance from scratch.
- -->
 
 # Introduction
 This set of exercises is meant to help you get started with programming in Triton, in the style of 'a hackers guide to' - we won't focus too much on the inner working of Triton. First, lets get started with a small introduction to Triton. From the GitHub repository[^1] we can get a good idea of what it is about:
@@ -253,36 +223,28 @@ def maxpool(inputs: torch.Tensor) -> torch.Tensor:
 ```
 
 # Exercises
-The exercises are meant to familarize yourself with the concepts discussed above. To start, we will work on some 'naive' kernels, where we have a single program that loads the entire matrix. We will slowly work towards loading blocks of the matrix instead and performing some math operations to transform them. On the way we will implement the vector addition and softmax kernels discussed on the Triton documentation and a 2D sum kernel that introduces a new concept, [`tl.advance`](https://github.com/openai/triton/blob/cb83b42ed6397d170ab539c9c0a99afff3971476/python/triton/language/core.py#L1113).
+The exercises are meant to familarize yourself with the concepts discussed above. You can find them [here](https://github.com/lweitkamp/triton_exercises). There are 6 topics in total, some that start off with what I call a 'naive' kernel that does not make use of multiple programs but only a single one. Unit tests are in place for each kernel and you can run them with pytest: `python -m pytest exercise_1_getting_started/`.
 
-## Copying Tensors: 1D Copy (naive)
-## Copying Tensors: 2D Copy (naive)
-## Copying Tensors: 2D Copy (blocked)
+If you can't figure it all out, there is a branch with all solutions [here](https://github.com/lweitkamp/triton_exercises/tree/solutions/exercise_1_getting_started).
 
-- copy_1d_kernel                    1D full copy (naive)
-- copy_kernel                       2D full copy (naive)
-- copy_blocked_kernel               2D full copy (blocked)
+**Copying Tensors** - Start with two naive kernels, one that copies a simple vector from one point of memory to another and one that does the same for a 2D tensor. The third kernel will copy a 2D tensor in blocks of 16 by 16 each.
 
-## Transposing Tensors
-- transpose_kernel                  2D transpose (naive)
-- transpose_with_block_ptr_kernel   2D transpose (naive pointer technique)
-- transpose_blocked_kernel          2D transpose (blocked)
+**Transposing Tensors** - We again have two naive kernels here, one that loads a 2D tensor in full and transposes it before storing, and one that loads the same 2D tensor but *loads* it transposed and stores it. The third kernel will transpose the 2D tensor row-by-row.
 
-## Vector Addition
-- vector_addition_kernel            1D vector addition (blocked row-wise)
+**Vector Addition** - Finally, a useful kernel! This exercise uses the approach as we defined above in the introduction but instead uses block pointers.
 
-## Summing Tensors
-- sum_kernel                        2D sum (blocked row-wise)
+**Summing Tensors** - Perform a sum of a 2D tensor row-wise, reducing an M by N tensor to a vector of length M.
 
-## Softmax
-- softmax_kernel                    2D softmax (blocked row-wise)
+**Softmax** - A row-wise softmax kernel that fits ***exactly*** into memory, so we do not care about padding values for now, this will be left to the third exercise. There are many ways to implement a softmax, make sure to at least a numerically stable one.
 
-## Maybe in the future: Reshaping
-Ideally we would also have an exercise dealing with reshaping kernels. However, `tl.reshape` throws an error, and `tl.view` is unstable and does not work yet as of writing this. From the documentation of Triton:
-
-[`tl.view`](https://triton-lang.org/main/python-api/generated/triton.language.view.html):
+**Reshaping** - Ideally we would also have an exercise dealing with reshaping kernels. However, `tl.reshape` throws an error, and [`tl.view`](https://triton-lang.org/main/python-api/generated/triton.language.view.html) is unstable and does not work yet as of writing this. From the documentation of Triton:
 
 > "Returns a tensor with the same elements as input but a different shape. **The order of the elements may not be preserved.**" *[emphasis mine]*
+
+It's not like reshape *doesn't* work, but the behavior is much different from Torch. I'm assuming this will be fixed at one point as it has been brought up in the GitHub issues several times.
+
+{{< figure src="/img/triton/getting_started/reshape_issue.png" caption="Fig 4. Reshaping in Triton. The input is a 2D matrix created with a torch range. Top right is the torch reshape output, bottom right is the triton reshape output." >}}
+
 
 # Reference
 
