@@ -7,7 +7,7 @@ The exercises are focused on the python API and we will not spend much time disc
 It's currently a work in progress, but feel free to start with the first section. The following is the table of content for content-to-be:
 
 1. [Getting Started]({{< ref "triton_exercise_1_getting_started" >}}) - a sequence of small exercises to learn the basics of Triton.
-2. [Optimization and Benchmarking]({{< ref "triton_exercise_2_benchmarking" >}}) - on measuring and optimizing the performance of triton kernels.
+2. [Optimization and Benchmarking]({{< ref "triton_exercise_2_benchmarking_and_autotuning" >}}) - on measuring and optimizing the performance of triton kernels by auto-tuning.
 3. Blocked Softmax - a softmax for tensors where rows *do not* fit into SRAM.
 4. Matrix Multiplication - this one follows the Triton tutorial, and is necessary for building understanding of exercise 5.
 5. Flash Attention - Probably using alibi, or some non-default attention mechanism.
