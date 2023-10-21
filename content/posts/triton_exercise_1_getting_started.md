@@ -6,7 +6,7 @@ draft: false
 
 This is part 1 of an [exercise series on Triton]({{< ref "triton_exercises/index">}}). You can find the exercises on [GitHub](https://github.com/lweitkamp/triton_exercises) and find the other parts here:
 1. [Getting Started]({{< ref "triton_exercise_1_getting_started" >}}) - a sequence of small exercises to learn the basics of Triton.
-2. [Optimization and Benchmarking]({{< ref "triton_exercise_2_benchmarking" >}}) - on measuring and optimizing the performance of triton kernels.
+2. [Benchmarking and Auto-tuning]({{< ref "triton_exercise_2_benchmarking_and_autotuning" >}}) - on measuring and optimizing the performance of triton kernels.
 
 
 # Introduction
