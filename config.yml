@@ -1,6 +1,6 @@
-baseURL: http://example.org/
+baseURL: https://lweitkamp.github.io
 languageCode: en-us
-title: Laurens Weitkamp
+title: Eigenvalues in Bloom
 theme: "etch"
 
 params:
@@ -43,11 +43,15 @@ markup:
 # Menu
 menu:
   main:
-    - identifier: Post Archive
-      name: Post Archive
+    - identifier: About
+      name: About
+      url: /about/
+      weight: 1
+    - identifier: Archive
+      name: Archive
       url: /posts/
-      weight: 10
-    - identifier: Triton Exercises
-      name: Triton Exercises
+      weight: 2
+    - identifier: Triton Primer
+      name: Triton Primer
       url: /triton_exercises/
-      weight: 20
+      weight: 3
