@@ -1,0 +1,58 @@
+[
+  {
+    "objectID": "posts/packing/index.html",
+    "href": "posts/packing/index.html",
+    "title": "Packing",
+    "section": "",
+    "text": "When we add several sequences to a single batch sample, we are packing that sample. This is typically done to fill the context length of a sample and reduce the amount of padding. If we have a context length of \\(c\\) with two sequences \\(A\\) and \\(B\\) of lengths \\(k\\) and \\(v\\) respectively, the following figure depicts a packed sample."
+  },
+  {
+    "objectID": "posts/packing/index.html#in-the-literature",
+    "href": "posts/packing/index.html#in-the-literature",
+    "title": "Packing",
+    "section": "In the Literature",
+    "text": "In the Literature\nPacking is briefly described in most papers (in fact, most authors cite T5 for it), here are some from the literature:\n\n\n\nPaper\nQuote\n\n\n\n\nRoBERTa1\n“Each input is packed with full sentences sampled contiguously from one or more documents, such that the total length is at most 512 tokens.”\n\n\nGPT-32\n“During training we always train on sequences of the full nctx = 2048 token context window, packing multiple documents into a single sequence when documents are shorter than 2048, in order to increase computational efficiency.”\n\n\nT53\n“Whenever possible, we “pack” multiple sequences into each entry of the batch so that our batches contain roughly 216 = 65,536 tokens.”\n\n\nT04\n“we use packing to combine multiple training examples into a single sequence to reach the maximum sequence length.”\n\n\n\n1 RoBERTa: A Robustly Optimized BERT Pretraining Approach2 Language Models are Few-Shot Learners3 Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer4 Multitask Prompted Training Enables Zero-Shot Task Generalization"
+  },
+  {
+    "objectID": "posts/packing/index.html#potential-issues",
+    "href": "posts/packing/index.html#potential-issues",
+    "title": "Packing",
+    "section": "Potential Issues",
+    "text": "Potential Issues\nImagine we are using an autoregressive transformer decoder to predict token \\(B_1\\) given a completely unrelated randomly sampled sentence \\(A\\). We are essentially predicting randomness. This is called cross-contamination - this should hurt the loss since whatever we predict would be somewhat nonsensical. To counter the effect of cross-contamination, the GPT-3 authors chose to simply add an end-of-document token embedding between packed sequences which seems to work fine.\nMasked Language Modeling approaches like RoBERTa have different issues when it comes to cross-contamination. Sequences are sampled from documents and differentiated by the end-of-document, but it appears that sampling sequences from different documents hurts the loss when compared to sequences from the same document. Sampling from the same document is often times difficult or impossible, so the authors take the loss."
+  },
+  {
+    "objectID": "posts/packing/index.html#packing-and-masking",
+    "href": "posts/packing/index.html#packing-and-masking",
+    "title": "Packing",
+    "section": "Packing and Masking",
+    "text": "Packing and Masking\nAs mentioned, we can simply add the end-of-document token to differentiate sequences packed, but there is a better alternative that involves masking. Discussed in more detail in Krell et al.5, we can sum it up in two points.\n5 Efficient Sequence Packing without Cross-contamination\n1. Change in Positional Encoding\nPositional encodings/embeddings should be adjusted to account for packed sequences. the extra sequences that are packed should start at an appropriate positional embedding, not just following the previous sequences. If we have a positional encoder based on the token index \\(\\text{PE}(i)\\), the following figure shows how to reset the index:\n\n\n\nPacked Positional Embedding\n\n\n\n\n2. Change in Self-Attention Mask\nMasking in self-attention needs to ensure that one sequence cannot attend to another sequence. We need to merge autoregressive masks for the self-attention layer. Some example code:\n\nimport numpy as np\nfrom typing import List\n\n\ndef create_mask(sequence_lengths: List[int]) -&gt; np.ndarray:\n    \"\"\"Create autoregressive mask. The input is assumed to be a single\n    sequence (list of size one) or a pack of sequences. The output is a\n    single autoregressive mask.\n\n    Args:\n        sequence_lengths: List of sequences lengths.\n\n    Returns:\n        Autoregressive masks.\n    \"\"\"\n\n    def create_autoregressive_mask(sequence_length: int) -&gt; np.ndarray:\n        mask = np.triu(np.ones((sequence_length, sequence_length)), k=1)\n        return mask\n\n    sequence, offset = sum(sequence_lengths), 0\n    mask = np.ones((sequence, sequence), dtype=np.bool_)\n    for length in sequence_lengths:\n        mask[\n            offset:offset+length,\n            offset:offset+length,\n        ] = create_autoregressive_mask(length)\n        offset += length\n    return mask\n\nIn short: repeatedly pack sequences and merge their respective autoregressive masks until we hit the context length. A merge operation of two masks can be seen below:\n\n\n\nPacked Mask\n\n\nWith additive-masked attention, everything in the white region should be set to negative infinity to ensure that they will not be used during softmax. If properly implemented, you might notice that it makes no difference if we have \\(n\\) sequences or \\(l \\leq n\\) packed sequences sourced from the \\(n\\) - the gradient step should6 be equal. It’s worth your time looking at figures 3 and 4 in the paper, they explain the performance of packing and the effect of ‘proper’ masking.\n6 In practice, however, …It’s not a complete free lunch though. We can normally save a single triangular matrix for self attention that is pre-computed, but now we will need an individual mask per sample. Thats another memory overhead to consider - typical flash attention implementations won’t even register a mask but will just perform masking based on the sequence index."
+  },
+  {
+    "objectID": "posts/packing/index.html#closing-thoughts",
+    "href": "posts/packing/index.html#closing-thoughts",
+    "title": "Packing",
+    "section": "Closing Thoughts",
+    "text": "Closing Thoughts\nPacking increases the effective batch size, allowing us to forward more samples (= more throughput!) through the model and converge quicker. To maximize the performance when using packing:\n\nMask correctly for positional encoding\nMask correctly for self-attention\n\nIn practice we see both the ‘masked’ packing and packing using the end-of-document approaches. In theory the end-of-document token can communicate itself to all other tokens in the residual stream.\nIt’s interesting to see that GPT-3 did not use masked packing. Perhaps the loss increase by not masking properly is not as bad or completely absent in large scale training? It is also possible that GPT4 is trained using masked packing. Does Gemini/PaLM use masked packing? If they use t5x it seems so7, but they still use the end-of-document token8:\n7 They call it segmented data - from the T5x codebase.8 Page 10 of the PaLM paper.\nA sequence length of 2048 was used for all models. Input examples are concatenated together and then split into sequences of exactly 2048 tokens, so that there are no padding tokens, but examples may be split in the middle. Input examples are differentiated from one another with a special [eod] token.\n\nA large part of packing seems to be that it is this poorly documented practice that top companies probably have a tremendous amount of in-house knowledge about.\nFor an offical implementation that packs sequences see the TensorFlow tensor2tensor library9. It seems that Huggingface does not support packing10 - weird!\n\n\n9 github.com/tensorflow/tensor2tensor10 https://github.com/huggingface/transformers/issues/17726 & https://github.com/huggingface/transformers/issues/6661"
+  },
+  {
+    "objectID": "index.html",
+    "href": "index.html",
+    "title": "Home",
+    "section": "",
+    "text": "Hey, this is the website of Laurens Weitkamp. I’m a machine learning engineer interested in Computer Vision, Reinforcement Learning, and Language Modelling (and their intersection!).\nI currently work for Thirona, where I train deep nets for medical imaging. Before that, I got my graduate degree in Artifical Intelligence where I specialized in hierarchical reinforcement learning (and published a paper on explainable RL).\n\n\n\n\n\n\n\n\n\nDate\n\n\nTitle\n\n\nAuthor\n\n\n\n\n\n\nJan 30, 2024\n\n\nDistributed NumPy: Data Parallel\n\n\nLaurens Weitkamp\n\n\n\n\nJan 29, 2024\n\n\nDistributed NumPy: Sequence Parallel\n\n\nLaurens Weitkamp\n\n\n\n\nJan 27, 2024\n\n\nDistributed NumPy: Tensor Parallel (Megatron-LM)\n\n\nLaurens Weitkamp\n\n\n\n\nJan 25, 2024\n\n\nDistributed NumPy: Foundations\n\n\nLaurens Weitkamp\n\n\n\n\nMay 1, 2023\n\n\nPacking\n\n\nLaurens Weitkamp\n\n\n\n\n\nNo matching items"
+  },
+  {
+    "objectID": "posts/distributed_numpy_foundations/index.html",
+    "href": "posts/distributed_numpy_foundations/index.html",
+    "title": "Distributed NumPy: Foundations",
+    "section": "",
+    "text": "This post will form the basis of a sequence of posts on various parallelization strategies used during training and inference of transformer models. The goal is simple: implement a parallelization strategy using only NumPy and MPI, such that a (tiny) transformer model can train1 But before we can start with approaching parallelization, we need some primitives at the ready for communicating across devices.\n1 Code is stored at GitHub.\nAcross Device Communication\nMessage Passing Interface (MPI).\n\nReduce\n\n\nScatter\n\n\nGather"
+  },
+  {
+    "objectID": "posts/distributed_numpy_tensor_parallel/index.html",
+    "href": "posts/distributed_numpy_tensor_parallel/index.html",
+    "title": "Distributed NumPy: Tensor Parallel (Megatron-LM)",
+    "section": "",
+    "text": "In the previous post we covered the basics of communicating numpy ndarrays across devices using MPI. With that in place, we can now start implementing various parallelization strategies used for training and inferencing transformer models.\nThis post will cover Tensor Parallelization introduced by Nvidia in the Megatron-LM1 paper.\n\n\n1 The full Megatron-LM suite involves tensor, pipeline, and sequence parallelization."
+  }
+]
