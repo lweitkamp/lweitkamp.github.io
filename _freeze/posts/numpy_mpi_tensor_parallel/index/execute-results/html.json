@@ -1,0 +1,12 @@
+{
+  "hash": "b15b41b6cf3de463069d5a771429f29e",
+  "result": {
+    "engine": "jupyter",
+    "markdown": "---\ntitle: \"Tensor Parallel\"\nauthor: \"Laurens Weitkamp\"\ndate: \"2024-01-31\"\ncategories: [numpy, mpi, transformers, tensor parallel]\n\nformat:\n  html:\n    grid:\n      margin-width: 350px\n2reference-location: margin\ncitation-location: margin\n---\n\ntest with reference[^1]\n\n\n```{p}\n#| label: fig-margin\n#| fig-cap: \"MPG vs horsepower, colored by transmission.\"\n#| column: margin\n#| message: false\nprint(\"hello world\")\n```\n\n\n[^1]: dsdsf\n\n",
+    "supporting": [
+      "index_files"
+    ],
+    "filters": [],
+    "includes": {}
+  }
+}

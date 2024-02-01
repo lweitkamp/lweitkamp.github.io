@@ -1,0 +1,30 @@
+project:
+  type: website
+
+website:
+  # title: "website"
+  search: false
+  navbar:
+    left:
+      - index.qmd
+    right:
+      - icon: github
+        href: https://github.com/lweitkamp/
+      - icon: twitter
+        href: https://twitter.com/laurensweitkamp
+format:
+  html:
+    theme: litera  # litera sandstone
+    css: styles.css
+
+
+
+# simplex
+# sketchy
+# solar
+# spacelab
+# superhero
+# united
+# vapor
+# yeti
+# zephyr
