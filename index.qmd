@@ -11,8 +11,9 @@ listing:
   filter-ui: false
   table-striped: false 
   max-description-length: 175
+  fields: [title, date]
 page-layout: full
-title-block-banner: true
+title-block-banner: False
 
 
 # format:
@@ -27,3 +28,7 @@ I'm a machine learning engineer interested in Computer Vision, Reinforcement Lea
 
 I currently work for [Thirona](https://thirona.eu/), where I train deep nets for medical imaging.
 Before that, I got my graduate degree in Artifical Intelligence where I specialized in [hierarchical reinforcement learning](https://scripties.uba.uva.nl/search?id=record_29279) (and [published a paper](https://arxiv.org/abs/1902.00566) on explainable RL).
+
+<br>
+
+### Recent Posts
