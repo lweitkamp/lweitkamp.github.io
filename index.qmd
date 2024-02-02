@@ -22,7 +22,7 @@ title-block-banner: False
 # citation-location: margin
 ---
 
-Hey, this is the website of Laurens Weitkamp.
+Welcome to my website, I'm Laurens Weitkamp.
 I'm a machine learning engineer interested in Computer Vision, Reinforcement Learning, and Language Modelling (and their intersection!).
 
 
