@@ -2,10 +2,6 @@
   {
     "listing": "/index.html",
     "items": [
-      "/posts/distributed_numpy_data_parallel/index.html",
-      "/posts/distributed_numpy_sequence_parallel/index.html",
-      "/posts/distributed_numpy_tensor_parallel/index.html",
-      "/posts/distributed_numpy_foundations/index.html",
       "/posts/packing/index.html"
     ]
   }
