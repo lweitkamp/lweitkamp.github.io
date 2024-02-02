@@ -39,6 +39,20 @@
     "href": "index.html",
     "title": "Home",
     "section": "",
-    "text": "Hey, this is the website of Laurens Weitkamp. I’m a machine learning engineer interested in Computer Vision, Reinforcement Learning, and Language Modelling (and their intersection!).\nI currently work for Thirona, where I train deep nets for medical imaging. Before that, I got my graduate degree in Artifical Intelligence where I specialized in hierarchical reinforcement learning (and published a paper on explainable RL).\n\n\n\n\n\n\n\n\n\nDate\n\n\nTitle\n\n\nAuthor\n\n\n\n\n\n\nMay 1, 2023\n\n\nPacking\n\n\nLaurens Weitkamp\n\n\n\n\n\nNo matching items"
+    "text": "Hey, this is the website of Laurens Weitkamp. I’m a machine learning engineer interested in Computer Vision, Reinforcement Learning, and Language Modelling (and their intersection!).\nI currently work for Thirona, where I train deep nets for medical imaging. Before that, I got my graduate degree in Artifical Intelligence where I specialized in hierarchical reinforcement learning (and published a paper on explainable RL).\n\n\n\n\n\n\n\n\n\nDate\n\n\nTitle\n\n\nAuthor\n\n\n\n\n\n\nJan 30, 2024\n\n\nDistributed NumPy: Data Parallel\n\n\nLaurens Weitkamp\n\n\n\n\nJan 29, 2024\n\n\nDistributed NumPy: Sequence Parallel\n\n\nLaurens Weitkamp\n\n\n\n\nJan 27, 2024\n\n\nDistributed NumPy: Tensor Parallel (Megatron-LM)\n\n\nLaurens Weitkamp\n\n\n\n\nJan 25, 2024\n\n\nDistributed NumPy: Foundations\n\n\nLaurens Weitkamp\n\n\n\n\nMay 1, 2023\n\n\nPacking\n\n\nLaurens Weitkamp\n\n\n\n\n\nNo matching items"
+  },
+  {
+    "objectID": "posts/distributed_numpy_foundations/index.html",
+    "href": "posts/distributed_numpy_foundations/index.html",
+    "title": "Distributed NumPy: Foundations",
+    "section": "",
+    "text": "This post will form the basis of a sequence of posts on various parallelization strategies used during training and inference of transformer models. The goal is simple: implement a parallelization strategy using only NumPy and MPI, such that a (tiny) transformer model can train1 But before we can start with approaching parallelization, we need some primitives at the ready for communicating across devices.\n1 Code is stored at GitHub.\nAcross Device Communication\nMessage Passing Interface (MPI).\n\nReduce\n\n\nScatter\n\n\nGather"
+  },
+  {
+    "objectID": "posts/distributed_numpy_tensor_parallel/index.html",
+    "href": "posts/distributed_numpy_tensor_parallel/index.html",
+    "title": "Distributed NumPy: Tensor Parallel (Megatron-LM)",
+    "section": "",
+    "text": "In the previous post we covered the basics of communicating numpy ndarrays across devices using MPI. With that in place, we can now start implementing various parallelization strategies used for training and inferencing transformer models.\nThis post will cover Tensor Parallelization introduced by Nvidia in the Megatron-LM1 paper.\n\n\n1 The full Megatron-LM suite involves tensor, pipeline, and sequence parallelization."
   }
 ]
