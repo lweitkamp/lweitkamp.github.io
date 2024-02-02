@@ -2,10 +2,26 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://lweitkamp.github.io/posts/packing/index.html</loc>
-    <lastmod>2024-02-01T16:38:00.410Z</lastmod>
+    <lastmod>2024-02-01T15:23:53.338Z</lastmod>
+  </url>
+  <url>
+    <loc>https://lweitkamp.github.io/posts/distributed_numpy_sequence_parallel/index.html</loc>
+    <lastmod>2024-02-01T15:13:17.099Z</lastmod>
+  </url>
+  <url>
+    <loc>https://lweitkamp.github.io/posts/distributed_numpy_data_parallel/index.html</loc>
+    <lastmod>2024-02-01T15:13:21.798Z</lastmod>
   </url>
   <url>
     <loc>https://lweitkamp.github.io/index.html</loc>
-    <lastmod>2024-02-01T16:38:00.410Z</lastmod>
+    <lastmod>2024-02-01T14:25:18.993Z</lastmod>
+  </url>
+  <url>
+    <loc>https://lweitkamp.github.io/posts/distributed_numpy_foundations/index.html</loc>
+    <lastmod>2024-02-01T15:13:20.151Z</lastmod>
+  </url>
+  <url>
+    <loc>https://lweitkamp.github.io/posts/distributed_numpy_tensor_parallel/index.html</loc>
+    <lastmod>2024-02-01T14:24:54.097Z</lastmod>
   </url>
 </urlset>

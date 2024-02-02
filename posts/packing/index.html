@@ -272,7 +272,7 @@ window.Quarto = {
 <section id="change-in-self-attention-mask" class="level4 page-columns page-full">
 <h4 class="anchored" data-anchor-id="change-in-self-attention-mask">2. Change in Self-Attention Mask</h4>
 <p>Masking in self-attention needs to ensure that one sequence cannot attend to another sequence. We need to <em>merge</em> autoregressive masks for the self-attention layer. Some example code:</p>
-<div id="a0bab7a6" class="cell" data-execution_count="1">
+<div id="77bd5420" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> typing <span class="im">import</span> List</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -311,7 +311,7 @@ window.Quarto = {
 </figure>
 </div>
 <p>With additive-masked attention, everything in the white region should be set to negative infinity to ensure that they will not be used during softmax. If properly implemented, you might notice that it makes no difference if we have <span class="math inline">\(n\)</span> sequences or <span class="math inline">\(l \leq n\)</span> packed sequences sourced from the <span class="math inline">\(n\)</span> - the gradient step should<a href="#fn6" class="footnote-ref" id="fnref6" role="doc-noteref"><sup>6</sup></a> be equal. It’s worth your time looking at figures <a href="https://arxiv.org/pdf/2107.02027.pdf#page=7">3</a> and <a href="https://arxiv.org/pdf/2107.02027.pdf#page=8">4</a> in the paper, they explain the performance of packing and the effect of ‘proper’ masking.</p>
-<div class="no-row-height column-margin column-container"><p><sup>6</sup>&nbsp;In practice, however, …</p></div><p>It’s not a complete free lunch though. We can normally save a single triangular matrix for self attention that is pre-computed, but now we will need an individual mask per sample. Thats another memory overhead to consider - typical flash attention implementations won’t even register a mask but will just perform masking based on the sequence index.</p>
+<div class="no-row-height column-margin column-container"><p><sup>6</sup>&nbsp;In practice, however, …</p></div><p>It’s not a complete free lunch though. We can normally save a single triangular matrix for self attention that is pre-computed, but now we will need an individual mask per sample. Typical flash attention implementations won’t even register a mask but will just perform masking based on the sequence index.</p>
 </section>
 </section>
 <section id="closing-thoughts" class="level2 page-columns page-full">
