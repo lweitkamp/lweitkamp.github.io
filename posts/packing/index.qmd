@@ -3,7 +3,7 @@ title: "Packing"
 author: "Laurens Weitkamp"
 date: "2023-05-01"
 draft: false
-categories: [packing, language modelling, transformers, training]
+categories: [transformer, trainign, packing, language modelling]
 
 format:
   html:
