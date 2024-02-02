@@ -1,0 +1,19 @@
+---
+title: "Distributed NumPy: Tensor Parallel (Megatron-LM)"
+author: "Laurens Weitkamp"
+date: "2024-01-27"
+draft: false
+categories: [numpy, mpi, transformers, tensor parallel, megatron-lm]
+
+format:
+  html: default
+reference-location: margin
+citation-location: margin
+---
+
+In the previous post we covered the basics of communicating numpy `ndarrays` across devices using MPI. With that in place,
+we can now start implementing various parallelization strategies used for training and inferencing transformer models.
+
+This post will cover Tensor Parallelization introduced by Nvidia in the Megatron-LM[^1] paper.
+
+[^1]: The full Megatron-LM suite involves [tensor](https://arxiv.org/abs/1909.08053), [pipeline](http://arxiv.org/abs/2104.04473), and [sequence](http://arxiv.org/abs/2205.05198) parallelization.
