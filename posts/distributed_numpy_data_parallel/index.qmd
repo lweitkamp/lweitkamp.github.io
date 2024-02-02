@@ -1,0 +1,14 @@
+---
+title: "Distributed NumPy: Data Parallel"
+author: "Laurens Weitkamp"
+date: "2024-01-30"
+draft: false
+categories: [numpy, mpi, transformers, tensor parallel, megatron-lm]
+
+format:
+  html:
+    toc: true
+    toc-location: left
+reference-location: margin
+citation-location: margin
+---
