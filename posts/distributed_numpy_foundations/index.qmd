@@ -1,0 +1,29 @@
+---
+title: "Distributed NumPy: Foundations"
+author: "Laurens Weitkamp"
+date: "2024-01-25"
+draft: false
+categories: [numpy, mpi]
+
+format:
+  html:
+    toc: true
+    toc-location: left
+reference-location: margin
+citation-location: margin
+---
+
+This post will form the basis of a sequence of posts on various parallelization strategies used during training and inference of transformer models.
+The goal is simple: implement a parallelization strategy using only NumPy and MPI, such that a (tiny) transformer model can train[^1]
+But before we can start with approaching parallelization, we need some primitives at the ready for communicating across devices. 
+
+[^1]: Code is stored at [GitHub](https://github.com/lweitkamp/transformer_parallelisms).
+
+### Across Device Communication
+
+Message Passing Interface (MPI). 
+
+
+#### Reduce
+#### Scatter
+#### Gather
