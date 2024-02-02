@@ -17,14 +17,5 @@ format:
     theme: litera  # litera sandstone
     css: styles.css
 
-
-
-# simplex
-# sketchy
-# solar
-# spacelab
-# superhero
-# united
-# vapor
-# yeti
-# zephyr
+execute:
+  freeze: auto
