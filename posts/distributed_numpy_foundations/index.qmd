@@ -1,5 +1,5 @@
 ---
-title: "Distributed NumPy: Foundations"
+title: "Distributed NumPy: Multiprocess Communication"
 date: "2024-01-25"
 draft: false
 categories: [numpy, mpi]
@@ -12,33 +12,33 @@ reference-location: margin
 citation-location: margin
 ---
 
-This post will form the foundation of a sequence of posts on various parallelization strategies used during training and inference of transformer models.
-The goal is simple: implement several commonly used parallelization strategies using NumPy, such that a (tiny) transformer model can train[^1].
+This post will form the foundation of a sequence of posts on various parallelization strategies used during training and inference of transformer models. The goal is simple: implement several commonly used parallelization strategies using NumPy, such that a (tiny) transformer model can train[^1].
 
 [^1]: Code is stored at [GitHub](https://github.com/lweitkamp/transformer_parallelisms).
 
-However, NumPy does *not* work distributedly, so we need some way to (1) run it distributed and (2) communicate tensor data between processes.
-
+However, NumPy does *not* work distributed, so we need some way to (1) run it distributed and (2) communicate tensor data between processes.
 
 ### Communication Backends
+
 We will get inspired by looking at the options available to PyTorch. PyTorch calls these *communication backends* and they are described in detail in the docs[^2]:
 
-1. Gloo[^3], created by Meta which implements various communication primitives specifically targeted at deep learning. It implements a lot of communication primitives for the CPU and the most important ones for the GPU too. Nice! But i'd rather use something that is `pip` installable.
-2. MPI, the standard interface for message passing. This has most of the communication primitives available (and no doubt Gloo is designed with this standard in mind). We have a selection of python packages available, most notably `mpi4py`.
-3. NCCL[^4], Nvidia's communication library targeted towards for CUDA framework. Interesting, but we are not working on the GPU here.
+[^2]: <https://pytorch.org/docs/stable/distributed.html#backends>
 
-[^2]: [https://pytorch.org/docs/stable/distributed.html#backends](https://pytorch.org/docs/stable/distributed.html#backends)
-[^3]: [https://github.com/facebookincubator/gloo](https://github.com/facebookincubator/gloo). Note that they advice you to use Gloo only for CPUs.
-[^4]: [https://developer.nvidia.com/nccl](https://developer.nvidia.com/nccl)
+1.  Gloo[^3], created by Meta which implements various communication primitives specifically targeted at deep learning. It implements a lot of communication primitives for the CPU and the most important ones for the GPU too. Nice! But i'd rather use something that is `pip` installable.
+2.  MPI, the standard interface for message passing. This has most of the communication primitives available (and no doubt Gloo is designed with this standard in mind). We have a selection of python packages available, most notably `mpi4py`.
+3.  NCCL[^4], Nvidia's communication library targeted towards for CUDA framework. Interesting, but we are not working on the GPU here.
+
+[^3]: <https://github.com/facebookincubator/gloo>. Note that they advice you to use Gloo only for CPUs.
+
+[^4]: <https://developer.nvidia.com/nccl>
 
 MPI it is! This solves issue (1) - we can use `mpi4py`[^5]. Now let's look a bit at MPI and see how we can communicate data to solve issue (2).
 
-[^5]: [https://mpi4py.readthedocs.io/](https://mpi4py.readthedocs.io/)
+[^5]: <https://mpi4py.readthedocs.io/>
 
 ### Introduction to MPI
 
-
-```python
+``` python
 from mpi4py import MPI
 
 comm = MPI.COMM_WORLD
@@ -48,36 +48,33 @@ rank = comm.Get_rank()
 print(f"Rank {rank} of {size}")
 ```
 
-
 ### Adding NumPy in the Mix
+
 All the examples above are clear-cut for simple scalars or lists, but what we need is something that can work with NumPy `ndarrays` that are at least 3 dimensional[^6]. But we don't need to go crazy with it either, all we need is support for the following[^7] operations:
 
 [^6]: Mostly concerned with objects of shape `(batch_size, seq_len, d_model)`.
+
 [^7]: This list is compiled from a crawl of the [Megatron-LM](https://github.com/NVIDIA/Megatron-LM) and [TeraPipe](https://github.com/zhuohan123/terapipe) codebases. Scatter is added because I wanted a way to scatter the parameters of a sequental model to parallel models.
 
-- `all_reduce`
-- `all_gather`
-- `broadcast`
-- `barrier`
-- `scatter`
+-   `all_reduce`
+-   `all_gather`
+-   `broadcast`
+-   `scatter`
 
-Now it also makes more sense (to me at least) why Gloo has at least `broadcast` and `all_reduce` ready for GPUs!
-If it turns out that we need to add more ops to the list, we can do that in subsequent posts.
+Now it also makes more sense (to me at least) why Gloo has at least `broadcast` and `all_reduce` ready for GPUs! If it turns out that we need to add more ops to the list, we can do that in subsequent posts.
 
-
-We can't simply add numpy `ndarrays` to the MPI operations we discussed earlier. For NumPy, we have to go **uppercase** with it. That's right: `All_reduce`, `Scatter`, `All_gather`, .... They all work perfectly fine if the NumPy data is contiguous in memory! Let's start with the easiest ones and work our way to more difficult ops.
-I'm trying to keep it somewhat conform to how PyTorch does it, so whenever possible the operation is in-place (or in-place-ish)
+We can't simply add NumPy `ndarrays` to the MPI operations we discussed earlier. For NumPy, we have to go **uppercase** with it. That's right: `All_reduce`, `Scatter`, `All_gather`, .... They all work perfectly fine if the NumPy data is contiguous in memory! Let's start with the easiest ones and work our way to more difficult ops. I'm trying to keep it somewhat conform to how PyTorch does it, so whenever possible the operation is in-place (or in-place-ish).
 
 #### Broadcasting
 
 Actually, I was lying. For this operation we will not even need to go uppercase. It's very easy in fact:
 
-```python
+``` python
 def broadcast(
     tensor: np.ndarray,
     src: int = 0,
 ) -> None:
-    """Broadcast tensor to all devices.
+    """Broadcast tensor to all processes.
 
     Args:
         tensor (np.ndarray): NumPy array.
@@ -86,22 +83,20 @@ def broadcast(
     np.copyto(tensor, MPI_COMM.bcast(tensor, root=src))
 ```
 
-The fact that we broadcast a contiguous stream of bytes from one device (root) to all others makes it such that
-we don't really need to be careful here.
-
+The fact that we broadcast a contiguous stream of bytes from one device (root) to all others makes it such that we don't really need to be careful here.
 
 #### Reductions
-Now we are cooking. Reductions come in several forms and require a reduction op.
-In basically 99% of cases it will be `MPI.SUM`, and for some you might need `MPI.MAX` (think of the max trick for a distributed softmax).
 
-```python
+Now we are cooking. Reductions come in several forms and require a reduction op. In basically 99% of cases it will be `MPI.SUM`, and for some you might need `MPI.MAX` (think of the max trick for a distributed Softmax). First up is the simple `reduce`. We reduce to a certain destination process, typically root. If root is handling the function we can use [`MPI.IN_PLACE`](https://www.open-mpi.org/doc/v4.1/man3/MPI_Reduce.3.php#sect8) to designate the root tensor also as receiving buffer:
+
+``` python
 def reduce(
     tensor: np.ndarray,
     dst: int = 0,
     op: MPI.Op = MPI.SUM,
 ) -> None:
-    """Reduce tensor across all devices and broadcast the result
-    back to a single device.
+    """Reduce tensor across all processes and broadcast the result
+    back to a single process.
 
     Args:
         tensor (np.ndarray): NumPy array.
@@ -114,15 +109,15 @@ def reduce(
         MPI_COMM.Reduce(tensor, None, op=op, root=dst)
 ```
 
-and ...
+All-reduce is even easier, since in that case we can set every process' receiving buffer as `MPI.IN_PLACE`:
 
-```python
+``` python
 def all_reduce(
     tensor: np.ndarray,
     op: MPI.Op = MPI.SUM,
 ) -> None:
-    """Reduce tensor across all devices and broadcast the result
-    back to all devices.
+    """Reduce tensor across all processes and broadcast the result
+    back to all processes.
 
     Args:
         tensor (np.ndarray): NumPy array.
@@ -130,3 +125,32 @@ def all_reduce(
     """
     MPI_COMM.Allreduce(MPI.IN_PLACE, tensor, op=op)
 ```
+
+#### Scatter
+
+I'm mainly adding scatter as a way to start with a single model weight and split that along several processes. In that sense, we take a source tensor, split it along an axis and send it to the destination tensor - each process will have each own destination tensor. Here we need to know the world size and we request it with the `world_size()` function:
+
+``` python
+def scatter(
+    source_tensor: np.ndarray,
+    destination_tensor: np.ndarray,
+    axis: int,
+    src: int = 0,
+) -> None:
+    """We scatter the source tensor along an axis and the scattered result
+    will be collected in the destination tensor for each process.
+
+    Args:
+        source_tensor (np.ndarray): NumPy array that collects the scattered result.
+        destination_tensor (np.ndarray): List of tensors to scatter.
+        axis (int): axis to split source_tensor and scatter the results with.
+        src (int): Rank from which we scatter the tensor.
+    """
+    scatter_list = np.split(source_tensor, world_size(), axis=axis)
+    scatter_list = np.concatenate([np.ravel(x) for x in scatter_list])
+    MPI_COMM.Scatterv(scatter_list, destination_tensor, root=src)
+```
+
+There is an interesting operation going on here which is `ravel`. This ensures that however we split the axis, we send a **contiguous** block of data to each process. Scattering is also relatively easy. The counterpart to it, gathering, is not.
+
+#### All-Gather
