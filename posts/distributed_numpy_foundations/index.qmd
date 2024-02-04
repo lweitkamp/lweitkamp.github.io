@@ -22,7 +22,7 @@ However, NumPy does *not* work distributed, so we need some way to (1) run it di
 
 We will get inspired by looking at the options available to PyTorch. PyTorch calls these *communication backends* and they are described in detail in the docs[^2]:
 
-[^2]: <https://pytorch.org/docs/stable/distributed.html#backends>
+[^2]: [Pytorch Distributed Backend (docs)](https://pytorch.org/docs/stable/distributed.html#backends){.uri}
 
 1.  Gloo[^3], created by Meta which implements various communication primitives specifically targeted at deep learning. It implements a lot of communication primitives for the CPU and the most important ones for the GPU too. Nice! But i'd rather use something that is `pip` installable.
 2.  MPI, the standard interface for message passing. This has most of the communication primitives available (and no doubt Gloo is designed with this standard in mind). We have a selection of python packages available, most notably `mpi4py`.
@@ -60,6 +60,7 @@ All the examples above are clear-cut for simple scalars or lists, but what we ne
 -   `all_gather`
 -   `broadcast`
 -   `scatter`
+-   `reduce_scatter`
 
 Now it also makes more sense (to me at least) why Gloo has at least `broadcast` and `all_reduce` ready for GPUs! If it turns out that we need to add more ops to the list, we can do that in subsequent posts.
 
@@ -126,6 +127,8 @@ def all_reduce(
     MPI_COMM.Allreduce(MPI.IN_PLACE, tensor, op=op)
 ```
 
+Practically speaking, we will only use all-reduce, but we will need it a lot. For example, tensor-parallel requires the split results after the MLP and attention layer to be all-reduced in the forward pass and the gradients need to be all-reduced in the backward pass.
+
 #### Scatter
 
 I'm mainly adding scatter as a way to start with a single model weight and split that along several processes. In that sense, we take a source tensor, split it along an axis and send it to the destination tensor - each process will have each own destination tensor. Here we need to know the world size and we request it with the `world_size()` function:
@@ -154,3 +157,43 @@ def scatter(
 There is an interesting operation going on here which is `ravel`. This ensures that however we split the axis, we send a **contiguous** block of data to each process. Scattering is also relatively easy. The counterpart to it, gathering, is not.
 
 #### All-Gather
+
+If gather is a sort of inverse to the scatter operation, we here **receive** a contiguous block of data from each process and need to collect it in the correct shape. That last bit is somewhat tricky; the figure below explains the issue at hand.
+
+![We scatter a tensor along the second dimension. When we subsequently all-gather the resulting tensors back, the values are in incorrect order.](images/all_gather.svg){fig-align="center" width="543"}
+
+The solution that I found for this is rather ugly and involves splitting the gathered results and reshaping appropriately, but it does work[^8].
+
+[^8]: If you know there is a better way of dealing with this, please reach out!
+
+What is all-gather typically used for? It's used *at least* in Megatron-LM and Deepspeed style sequence parallelism.
+
+``` python
+def all_gather(
+    source_tensor: np.ndarray,
+    destination_tensor: np.ndarray,
+    axis: int = -1,
+) -> None:
+    """Gather source tensors from each process and collect it in destination tensor.
+
+    MPI sends a contiguous stream of bytes from each process. To ensure the expected
+    shape is returned in destination tensor, we collect the contiguous stream per
+    process and reshape each accordingly.
+
+    Args:
+        source_tensor (np.ndarray): Source tensor for each process.
+        destination_tensor (np.ndarray): Tensor to gather the results.
+        axis (int): The axis on which the tensor needs to be concatenated.
+    """
+    receiving_buffer = np.empty(np.prod(destination_tensor.shape))
+    MPI_COMM.Allgather(source_tensor, receiving_buffer)
+
+    receiving_buffer = np.split(receiving_buffer, world_size(), axis)
+    receiving_buffer = np.concatenate(
+        [x.reshape(source_tensor.shape) for x in receiving_buffer],
+        axis=-1,
+    )
+    np.copyto(destination_tensor, receiving_buffer)
+```
+
+#### Reduce-Scatter
