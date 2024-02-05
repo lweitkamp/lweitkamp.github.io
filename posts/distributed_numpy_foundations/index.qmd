@@ -10,6 +10,7 @@ format:
     toc-location: left
 reference-location: margin
 citation-location: margin
+number-sections: true
 ---
 
 This post will form the foundation of a sequence of posts on various parallelization strategies used during training and inference of transformer models. The goal is simple: implement several commonly used parallelization strategies using NumPy, such that a (tiny) transformer model can train[^1].
@@ -20,7 +21,7 @@ However, NumPy does *not* work distributed, so we need some way to (1) run it di
 
 ## Communication Backends
 
-We will get inspired by looking at the options available to PyTorch. PyTorch calls these *communication backends* and they are described in detail in the docs[^2]:
+We will get inspired by looking at how PyTorch does distributed computing. PyTorch has three options available for this, and calls these *communication backends*. They are described in detail in the docs[^2]:
 
 [^2]: [Pytorch Distributed Backend (docs)](https://pytorch.org/docs/stable/distributed.html#backends){.uri}
 
@@ -32,11 +33,17 @@ We will get inspired by looking at the options available to PyTorch. PyTorch cal
 
 [^4]: <https://developer.nvidia.com/nccl>
 
-MPI it is! This solves issue (1) - we can use `mpi4py`[^5]. Now let's look a bit at MPI and see how we can communicate data to solve issue (2).
-
-[^5]: <https://mpi4py.readthedocs.io/>
+MPI it is! This solves issue (1). Now let's look a bit at MPI and see how we can communicate data to solve issue (2).
 
 ## Introduction to MPI
+
+MPI, the *message passing interface*, is a standard for message passing on parallel architectures. As such, it specifies a range of protocols to communicate between processes but does not describe the underlying algorithms to do so. We will use the `mpi4py` python package that implements the major message passing protocols. We'll be re-hashing the main tutorials over at the `mpi4py` docs so feel free to skip the next section and go to @sec-numpy if you are familiar with the basics.
+
+MPI works with groups of processes, the main one being `MPI.COMM_WORLD` which stores *all* processes[^5]. Each process is identified by it's *rank*, a unique value in `[0 world_size-1]` with `world_size` being the total number of processes. In `mpi4py` we can get the basics going as follows, printing out each rank and the total world size[^6].
+
+[^5]: We will discuss creating groups if we ever get to 2 or 3D parallelism.
+
+[^6]: The printing does not have to be in order of rank!
 
 ``` python
 from mpi4py import MPI
@@ -48,13 +55,37 @@ rank = comm.Get_rank()
 print(f"Rank {rank} of {size}")
 ```
 
-## Adding NumPy in the Mix
+### Sending Data
 
-All the examples above are clear-cut for simple scalars or lists, but what we need is something that can work with NumPy `ndarrays` that are at least 3 dimensional[^6]. But we don't need to go crazy with it either, all we need is support for the following[^7] operations:
+We can send data *point-to-point* from one rank to another using `comm.send` and `comm.isend`[^665]. The latter will be useful for something like pipeline parallelism where we need to send the output of one layer to the next. Then there is `comm.broadcast` which sends data from one process to all other processes. 
 
-[^6]: Mostly concerned with objects of shape `(batch_size, seq_len, d_model)`.
+[^665]: any operation prefixed with `i` performs non-blocking; it won't wait for the data to be sent before moving on.
 
-[^7]: This list is compiled from a crawl of the [Megatron-LM](https://github.com/NVIDIA/Megatron-LM) and [TeraPipe](https://github.com/zhuohan123/terapipe) codebases. Scatter is added because I wanted a way to scatter the parameters of a sequental model to parallel models.
+
+The main reason *we* need MPI is because of the message passing protocols such as *broadcasting*, where we send data from one process to all other processes[^666]:
+
+``` python
+if rank == 0:
+    data = [(i+1)**2 for i in range(size)]
+else:
+    data = None
+
+data = comm.bcast(data, root=0)
+```
+[^666]: Broadcasting from Rank 0: ![](images/ops.svg){fig-align="center" width="543"}
+
+Depending on the changes we make to the data, we can choose to *gather* 
+
+ With the data in place, each process can do some work and we can *gather* the results back to a single process or *all gather* it back to all processes. If we need to do the same operation on the data we can also *scatter* the data, chunking it and sending each process a piece of the total.
+
+
+## Adding NumPy in the Mix {#sec-numpy}
+
+All the examples above are clear-cut for simple scalars or lists, but what we need is something that can work with NumPy `ndarrays` that are at least 3 dimensional[^7]. But we don't need to go crazy with it either, all we need is support for the following[^8] operations:
+
+[^7]: Mostly concerned with objects of shape `(batch_size, seq_len, d_model)`.
+
+[^8]: This list is compiled from a crawl of the [Megatron-LM](https://github.com/NVIDIA/Megatron-LM) and [TeraPipe](https://github.com/zhuohan123/terapipe) codebases. Scatter is added because I wanted a way to scatter the parameters of a sequental model to parallel models.
 
 -   `all_reduce`
 -   `all_gather`
@@ -162,9 +193,9 @@ If gather is a sort of inverse to the scatter operation, we here **receive** a c
 
 ![We scatter a tensor along the second dimension. When we subsequently all-gather the resulting tensors back, the values are in incorrect order.](images/all_gather.svg){fig-align="center" width="543"}
 
-The solution that I found for this is rather ugly and involves splitting the gathered results and reshaping appropriately, but it does work[^8].
+The solution that I found for this is rather ugly and involves splitting the gathered results and reshaping appropriately, but it does work[^9].
 
-[^8]: If you know there is a better way of dealing with this, please reach out!
+[^9]: If you know there is a better way of dealing with this, please reach out!
 
 What is all-gather typically used for? It's used *at least* in Megatron-LM and Deepspeed style sequence parallelism.
 
