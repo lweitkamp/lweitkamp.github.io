@@ -18,7 +18,7 @@ This post will form the foundation of a sequence of posts on various paralleliza
 
 However, NumPy does *not* work distributed, so we need some way to (1) run it distributed and (2) communicate tensor data between processes.
 
-### Communication Backends
+## Communication Backends
 
 We will get inspired by looking at the options available to PyTorch. PyTorch calls these *communication backends* and they are described in detail in the docs[^2]:
 
@@ -36,7 +36,7 @@ MPI it is! This solves issue (1) - we can use `mpi4py`[^5]. Now let's look a bit
 
 [^5]: <https://mpi4py.readthedocs.io/>
 
-### Introduction to MPI
+## Introduction to MPI
 
 ``` python
 from mpi4py import MPI
@@ -48,7 +48,7 @@ rank = comm.Get_rank()
 print(f"Rank {rank} of {size}")
 ```
 
-### Adding NumPy in the Mix
+## Adding NumPy in the Mix
 
 All the examples above are clear-cut for simple scalars or lists, but what we need is something that can work with NumPy `ndarrays` that are at least 3 dimensional[^6]. But we don't need to go crazy with it either, all we need is support for the following[^7] operations:
 
@@ -66,7 +66,7 @@ Now it also makes more sense (to me at least) why Gloo has at least `broadcast` 
 
 We can't simply add NumPy `ndarrays` to the MPI operations we discussed earlier. For NumPy, we have to go **uppercase** with it. That's right: `All_reduce`, `Scatter`, `All_gather`, .... They all work perfectly fine if the NumPy data is contiguous in memory! Let's start with the easiest ones and work our way to more difficult ops. I'm trying to keep it somewhat conform to how PyTorch does it, so whenever possible the operation is in-place (or in-place-ish).
 
-#### Broadcasting
+### Broadcasting
 
 Actually, I was lying. For this operation we will not even need to go uppercase. It's very easy in fact:
 
@@ -86,7 +86,7 @@ def broadcast(
 
 The fact that we broadcast a contiguous stream of bytes from one device (root) to all others makes it such that we don't really need to be careful here.
 
-#### Reductions
+### Reductions
 
 Now we are cooking. Reductions come in several forms and require a reduction op. In basically 99% of cases it will be `MPI.SUM`, and for some you might need `MPI.MAX` (think of the max trick for a distributed Softmax). First up is the simple `reduce`. We reduce to a certain destination process, typically root. If root is handling the function we can use [`MPI.IN_PLACE`](https://www.open-mpi.org/doc/v4.1/man3/MPI_Reduce.3.php#sect8) to designate the root tensor also as receiving buffer:
 
@@ -129,7 +129,7 @@ def all_reduce(
 
 Practically speaking, we will only use all-reduce, but we will need it a lot. For example, tensor-parallel requires the split results after the MLP and attention layer to be all-reduced in the forward pass and the gradients need to be all-reduced in the backward pass.
 
-#### Scatter
+### Scatter
 
 I'm mainly adding scatter as a way to start with a single model weight and split that along several processes. In that sense, we take a source tensor, split it along an axis and send it to the destination tensor - each process will have each own destination tensor. Here we need to know the world size and we request it with the `world_size()` function:
 
@@ -156,7 +156,7 @@ def scatter(
 
 There is an interesting operation going on here which is `ravel`. This ensures that however we split the axis, we send a **contiguous** block of data to each process. Scattering is also relatively easy. The counterpart to it, gathering, is not.
 
-#### All-Gather
+### All-Gather
 
 If gather is a sort of inverse to the scatter operation, we here **receive** a contiguous block of data from each process and need to collect it in the correct shape. That last bit is somewhat tricky; the figure below explains the issue at hand.
 
@@ -196,7 +196,7 @@ def all_gather(
     np.copyto(destination_tensor, receiving_buffer)
 ```
 
-#### Reduce-Scatter
+### Reduce-Scatter
 
 I ran into the same issue with contiguous data streams when trying to implement the reduce-scatter operation with NumPy arrays. I'm not sure how MPI does it underneath, but after a simple `timeit` benchmark with some reasonable shapes \~ `(256, 256)` the built-in `Reduce_scatter` ***is*** about 1.5x faster.
 
@@ -224,6 +224,6 @@ def reduce_scatter(
     scatter(source_tensor, destination_tensor, axis=-1, src=0)
 ```
 
-### Concluding
+## Concluding
 
 We've implemented the most commonly used communication operations available in well-known codebases. There are definitely some places that can be improved (`all_gather` and `reduce_scatter`) but for now everything is set-up to start working on the next post in this series: Megatron-LM style Tensor parallelism.
