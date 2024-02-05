@@ -14,6 +14,9 @@ website:
         href: https://twitter.com/laurensweitkamp
 format:
   html:
+    highlight-style: pygments
+    code-overflow: scroll # wrap
+    fontsize: 15px
     theme: litera  # litera sandstone
     css: styles.css
 

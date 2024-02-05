@@ -133,7 +133,7 @@ Practically speaking, we will only use all-reduce, but we will need it a lot. Fo
 
 I'm mainly adding scatter as a way to start with a single model weight and split that along several processes. In that sense, we take a source tensor, split it along an axis and send it to the destination tensor - each process will have each own destination tensor. Here we need to know the world size and we request it with the `world_size()` function:
 
-``` python
+``` {.python height="200px" width="500px"}
 def scatter(
     source_tensor: np.ndarray,
     destination_tensor: np.ndarray,
@@ -174,11 +174,12 @@ def all_gather(
     destination_tensor: np.ndarray,
     axis: int = -1,
 ) -> None:
-    """Gather source tensors from each process and collect it in destination tensor.
+    """Gather source tensors from each process and collect it in the
+    destination tensor.
 
-    MPI sends a contiguous stream of bytes from each process. To ensure the expected
-    shape is returned in destination tensor, we collect the contiguous stream per
-    process and reshape each accordingly.
+    MPI sends a contiguous stream of bytes from each process. To ensure
+    the expected shape is returned in destination tensor, we collect
+    the contiguous stream per process and reshape each accordingly.
 
     Args:
         source_tensor (np.ndarray): Source tensor for each process.
@@ -187,7 +188,6 @@ def all_gather(
     """
     receiving_buffer = np.empty(np.prod(destination_tensor.shape))
     MPI_COMM.Allgather(source_tensor, receiving_buffer)
-
     receiving_buffer = np.split(receiving_buffer, world_size(), axis)
     receiving_buffer = np.concatenate(
         [x.reshape(source_tensor.shape) for x in receiving_buffer],
@@ -197,3 +197,33 @@ def all_gather(
 ```
 
 #### Reduce-Scatter
+
+I ran into the same issue with contiguous data streams when trying to implement the reduce-scatter operation with NumPy arrays. I'm not sure how MPI does it underneath, but after a simple `timeit` benchmark with some reasonable shapes \~ `(256, 256)` the built-in `Reduce_scatter` ***is*** about 1.5x faster.
+
+``` python
+def reduce_scatter(
+    source_tensor: np.ndarray,
+    destination_tensor: np.ndarray,
+    op: MPI.Op = MPI.SUM,
+) -> None:
+    """Reduce source tensor to root process and scatter the reduction
+    back to all processes.
+
+    Again the issue with contiguous data streams - but I could not
+    find a workaround for MPI_COMM.Reduce_scatter so I resorted to using
+    the `reduce` and `scatter` operations I defined earlier.
+
+    Args:
+        source_tensor (np.ndarray): Source tensor for each process.
+        destination_tensor (np.ndarray): Tensor to gather the results.
+        op (MPI.Op): Operation to reduce the tensor.
+    """
+    # Maybe soon:
+    # MPI_COMM.Reduce_scatter(source_tensor, destination_tensor, op=op)
+    reduce(source_tensor, dst=0, op=op)
+    scatter(source_tensor, destination_tensor, axis=-1, src=0)
+```
+
+### Concluding
+
+We've implemented the most commonly used communication operations available in well-known codebases. There are definitely some places that can be improved (`all_gather` and `reduce_scatter`) but for now everything is set-up to start working on the next post in this series: Megatron-LM style Tensor parallelism.
