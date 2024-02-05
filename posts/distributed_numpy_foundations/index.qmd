@@ -133,7 +133,7 @@ Practically speaking, we will only use all-reduce, but we will need it a lot. Fo
 
 I'm mainly adding scatter as a way to start with a single model weight and split that along several processes. In that sense, we take a source tensor, split it along an axis and send it to the destination tensor - each process will have each own destination tensor. Here we need to know the world size and we request it with the `world_size()` function:
 
-``` {.python height="200px" width="500px"}
+``` python
 def scatter(
     source_tensor: np.ndarray,
     destination_tensor: np.ndarray,
