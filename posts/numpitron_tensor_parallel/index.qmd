@@ -1,5 +1,5 @@
 ---
-title: "Distributed NumPy: Foundations"
+title: "Tensor Parallelism"
 author: "Laurens Weitkamp"
 date: "2024-01-25"
 draft: false
@@ -7,23 +7,145 @@ categories: [numpy, mpi]
 
 format:
   html:
-    toc: true
+    toc: false
+    toc-expand: true
     toc-location: left
 reference-location: margin
 citation-location: margin
 ---
 
-This post will form the basis of a sequence of posts on various parallelization strategies used during training and inference of transformer models.
-The goal is simple: implement a parallelization strategy using only NumPy and MPI, such that a (tiny) transformer model can train[^1]
-But before we can start with approaching parallelization, we need some primitives at the ready for communicating across devices. 
+# Introduction
+Tensor parallel, introduced in the Megatron-LM paper by NVidia as *intra-layer model-parallelism*, is a technique for sharding model parameters across GPUs to reduce memory costs.
 
-[^1]: Code is stored at [GitHub](https://github.com/lweitkamp/transformer_parallelisms).
+There are plenty of blog-posts out there on tensor parallelism[^1]. They will go over the basics of tensor parallel: Split the linear layers on rows or columns, the attention is split on the head dim. In this post I want to focus primarily on the following:
 
-### Across Device Communication
+- The embedding table and the loss function. Changes for the MLP and the attention mechanism are often highlighted but the changes for these layers are not actually that much.
 
-Message Passing Interface (MPI). 
+- What changes are involved when using the 'shazeer' architecture.
+
+- The interplays between tensor parallel and other forms of parallel training. 
+Most of the insights in this post came from working on NuMPItron, a small library for transformer training using NumPy and MPI[^2] that currently supports tensor parallelism.
+
+[^1]: ...
+
+[^2]: [NuMPItron](https://github.com/lweitkamp/numpitron)
+
+## In Short
+If we are using $TP$ number of GPUs, the transformer model changes approximately as follows:
+
+1. The embedding matrix of size $d_{vocab} \times d_{model}$ is split on the vocab dim, each GPU has a chunk of $\frac{d_\text{vocab}}{TP} \times d_\text{model}$[^3].
+
+2. The attention layer QKV and O matrices of size $d_\text{model} \times n_\text{heads} \times d_\text{head}$ is split on the head dim, with each GPU having a chunk of $d_\text{model} \times \frac{n_\text{heads}}{TP} \times d_\text{head}$.
+
+3. The MLP linear layers of size $4 \cdot d_{model} \times  d_\text{model}$ are split on the model dim, with each GPU having a chunk of $4 \cdot d_{model} \times  \frac{d_\text{model}}{TP}$ per linear layer.
+
+[^3]: For this whole post we will assume **tied embeddings**, the same matrix used to embed tokens is used to un-emebed them. This is common practice and is used for XYZ.
+
+It's a relatively straightforward way to divide up a model into $TP$ chunks. Keep in mind that other layers such as normalization are not chunked, these are active on all devices. It's also not just used for training, but can also be applied during inference! This is especially useful if you are running a homebrew setup and want to inference LLMs that are exceedingly large (70B range). 
+
+There are some major downsides to this approach. As with pipeline model parallelism (inter-layer), it will require some invasive code changes[^4]. It is also as slow as your slowest device communication, which is why it is recommended to use **within** a single node with preferably high speed communication like NVLink. This is also why the value for $TP = 8$ will occur all over the place and is typically the default value for large runs.
+
+[^4]: there are several frameworks supporting it. Megatron-LM is the OG. Since 2023, Microsoft DeepSpeed has support for tensor parallel models too and since 2024 Nanotron by Hugginface also supports tensor parallel training.
 
 
-#### Reduce
-#### Scatter
-#### Gather
+# Tensor Parallel Transformer
+
+We start at the beginning, where we have a batch of tokens that are **broadcasted** to each GPU. For ease of comprehension, let's limit ourselves to $TP=2$.
+
+## Input Embedding
+The embedding table takes as input token indices and outputs an embedding per token. With $N_\text{batch} \times N_\text{ctx}$ input token indices, the output will be $N_\text{batch} \times N_\text{ctx} \times d_\text{model}$.
+
+Each GPU has $\frac{d_\text{vocab}}{2} \times d_\text{model}$ of the embedding table in memory. What happens to GPU 0's table lookup when it sees token index $d_\text{vocab} - 1$? Similarly, what would GPU 1 do if it encounters token index $0$?
+
+The answer is masking: if the token index falls out of range of the current GPU's chunk, simply pad that output vector with zeros. I've depicted this in the figure below:
+
+![](embedding_tensor_parallel.png)
+
+Here, the tokens are broadcast to both GPUs, and both GPUs figure out what to mask and what to embed - the output at this point will already be $N_\text{batch} \times N_\text{ctx} \times d_\text{model}$. Following this the `ALLREDUCE`[^5] ensures that masked indices are properly filled for both devices.
+
+[^5]: . `ALLREDUCE` counter forward pass: $1 \times N_\text{batch} \times N_\text{ctx} \times d_\text{model}$.
+
+In NuMPItron I've implemented the masking as follows[^6]:
+
+[^6]: [GitHub](https://github.com/) @TODO
+
+```python
+def forward(self, inputs: np.ndarray) -> np.ndarray:
+	# Figure out this GPU's chunk start and end.
+	chunk_start = npdist.tensor_parallel_rank() * self.embedding.data.shape[1]
+	chunk_end = chunk_start + self.embedding.data.shape[1]
+	mask = np.logical_or(inputs < chunk_start, inputs >= chunk_end)
+
+	# Set tokens to chunk range, mask tokens outside range.
+	inputs = inputs - chunk_start
+	inputs[mask] = 0
+
+	# Take the correct embeddings and mask outside range.
+	inputs_embedding = np.take(self.embedding.data.T, inputs, axis=0)
+	inputs_embedding[mask, :] = 0.0
+
+	npdist.all_reduce(inputs_embedding, group=npdist.tensor_parallel_group())
+	return inputs_embedding
+```
+
+Are there any alternatives to this? Why wouldn't we slice the tensor on the $d_\text{model}$ dim instead? I think this would be straightforward - each device would create a $N_\text{batch} \times N_\text{ctx} \times \frac{d_\text{model}}{2}$ tensor. It wouldn't require masking, but it *would* require an `ALLGATHER`, which has a worse worst-case complexity.
+
+
+## Attention
+The attention layer transforms the inputs into Query, Key, and Value tensors with weights $W_Q, W_K, W_V,$ each of shape $d_\text{model} \times n_\text{heads} \times d_\text{head}$. Each head calculates the attention weights and the attention values separately, and projects it back to a shared representation with weight matrix $W_O$ of shape $d_\text{head} \times n_\text{heads} \times d_\text{model}$.
+
+Because values are calculated separately, it is simple to split computation along each head, which is what tensor parallel does. Each GPU will therefore have in total $4 \times d_\text{model} \times \frac{N_\text{heads}}{2} \times d_\text{head}$ weights in memory (we assume no biases for the attention layer). An `ALLREDUCE`[^7] collects the output per device. 
+
+[^7]: . `ALLREDUCE` counter forward pass: $\large(N_\text{batch} \times N_\text{ctx} \times d_\text{model}\large) \large(1 + N_\text{layers}\large)$, backward pass: $N_\text{layers} \times N_\text{batch} \times N_\text{ctx} \times d_\text{model}$
+
+
+### Grouped/Multi-Query Attention
+Multi-query attention (MQA) is a modification to the transformer model where the key and value head size is reduced from $N_\text{heads}$ to $1$ to vastly reduce memory consumption when decoding. Grouped query attention (GQA) was introduced more recently as an interpolation between vanilla and multi-query attention to ensure quality does not degrade too much by the reduction in total parameters. 
+
+We have a bit of an issue when using MQA with $TP=8$, since we can't divide the single head to each GPU. A practical solution to this is to replicate the head to $TP$ size effectively using the same head on each device. In general you will see that GQA is used more often and it is set to 8 specifically to serve 8 GPUs in parallel[^8].
+
+[^8]: Trainium GPUs have similar issue since they come in 32 per node, they also advise to replicate the heads: [https://awsdocs-neuron.readthedocs-hosted.com/en/latest/libraries/neuronx-distributed/api_guide.html#gqa-qkv-linear-module](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/libraries/neuronx-distributed/api_guide.html#gqa-qkv-linear-module).
+
+
+## Feed Forward Network
+The feed forward net is a simple two layer multi layer perceptron with a ReLU nonlinearity in the middle:
+$$
+\large \text{FFN}_\text{MLP} = \max(xW_1 + b_1, 0)W_2 + b_2
+$$
+This means we have two weight matrices including biases that we need to shard across devices in some way that makes mathematical sense.
+
+There are two possible ways to shard the 2D weight matrices: along its columns ("column-parallel") or along its rows ("row-parallel"), depicted in the figure below:
+
+![](row-col-parallel.png)
+If we do a column-parallel sharded strategy, we end up with complete[^9] but sharded values (it would require an `ALLGATHER`). If we instead do a row-parallel sharded strategy, we end up with two partial and sharded values (requiring an `ALLREDUCE`).
+
+[^9]: Complete in terms of dot product sums. A ReLU on a partial sum: `max(0, -3) + max(0, 10) != max(0, -3 + 10)`.
+
+Performing a column-parallel strategy **first** ensures we can perform any nonlinearity since the values are complete already. We can follow it with a row-parallel matrix multiplication and `ALLREDUCE`[^10] the results for minimal communication overhead. An additional `AllREDUCE` is required at the end of the backward pass too.
+
+[^10]: `ALLREDUCE` counter forward pass: $\large( N_\text{batch} \times N_\text{ctx} \times d_\text{model}\large) \large(1 + 2 \times N_\text{layers}\large)$, backward pass: $2 \times N_\text{layers} \times N_\text{batch} \times N_\text{ctx} \times d_\text{model}$
+
+For the bias terms, we need to ensure that the column-parallel multiplication adds the bias **only on a single device**, and for the row-parallel multiplication we can split the bias.
+
+### SwiGLU
+Swish Gated Linear Units (SwiGLU) combine the Swish activation function[^11] with a Gated Linear Unit: a component-wise product of two linear layers. The result is that we have *three* weight matrices instead of two, and we omit any bias:
+
+[^11]: . $\text{Swish}_\beta(x) = x \sigma (\beta x)$ where $\sigma(x)$ is the sigmoid activation function.
+
+$$
+\large \text{FFN}_\text{SwiGLU} = (\text{Swish}_\beta(x W_1) \otimes xV) W_2
+$$
+Care must be taken to ensure the weight matrices $W_1$, $W_2$ and $V$ are of the correct dimensionality, but otherwise a tensor parallel strategy is pretty straightforward: $W_1$ and $V$ are column-parallel, and $W_2$ is row-parallel. Therefore, it also has the same communication overhead.
+
+
+## Un-Embedding and Loss Calculation
+We un-embed with the same sharded matrix as we embed, which means we will have the outputs logits split into $TP$ chunks.
+
+It's not mentioned in detail in the paper, but the loss calculation might be the most intrusive part in terms of code editing. 
+
+
+# Communication Overhead
+
+## Activation Checkpointing
+> In Megatron-LM with activation checkpointing, each transformer block performs two allreduce operations of size batch × seq length × hidden dim in the forward propagation, **two all-reduce for forward re-computation** and two more in the backward propagation. The total communication per block is 12 × seq length × hidden dim since communication volume of an all-reduce is 2 × message size.
+
