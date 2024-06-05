@@ -77,14 +77,19 @@ $$
 $$
 This means we have two weight matrices including biases that we need to shard across devices in some way that makes mathematical sense.
 
-There are two possible ways to shard the 2D weight matrices: along its columns ("column-parallel") or along its rows ("row-parallel"), depicted in the figure below:
+Depicted below is a 2D matrix multiplication, something like $xW$. We can shard computation along its columns ("column-parallel") or along its rows ("row-parallel").
 
-![](row-col-parallel.png)
-If we do a column-parallel sharded strategy, we end up with complete[^9] but sharded values (it would require an `ALLGATHER`). If we instead do a row-parallel sharded strategy, we end up with two partial and sharded values (requiring an `ALLREDUCE`).
+![](2d_matmul.png)
 
-[^9]: Complete in terms of dot product sums. A ReLU on a partial sum: `max(0, -3) + max(0, 10) != max(0, -3 + 10)`.
+If we do a column-parallel sharding strategy, we end up with complete sums but the results are sharded across GPUs, requiring an `ALLGATHER` operation.
 
-Performing a column-parallel strategy **first** ensures we can perform any nonlinearity since the values are complete already. We can follow it with a row-parallel matrix multiplication and `ALLREDUCE`[^10] the results for minimal communication overhead. An additional `AllREDUCE` is required at the end of the backward pass too.
+![](column_parallel.png)
+
+Looking at the row-parallel strategy instead, we end up with partial sums across GPUs that require an `ALLREDUCE`.
+
+![](row_parallel.png)
+
+Following the matrix multiplication with a ReLU or any nonlinearity, we can see that row-parallel will have some issues here, $\text{ReLU}(-5) + \text{ReLU}(14) \neq \text{ReLU}(9)$. Performing a column-parallel strategy **first** ensures we can perform any nonlinearity since the values are complete already. We can follow it with a row-parallel matrix multiplication and `ALLREDUCE`[^10] the results for minimal communication overhead. An additional `AllREDUCE` is required at the end of the backward pass too.
 
 [^10]: `ALLREDUCE` counter forward pass: $\large( N_\text{batch} \times N_\text{ctx} \times d_\text{model}\large) \large(1 + 2 \times N_\text{layers}\large)$, backward pass: $2 \times N_\text{layers} \times N_\text{batch} \times N_\text{ctx} \times d_\text{model}$
 
