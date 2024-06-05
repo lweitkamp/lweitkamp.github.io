@@ -13,7 +13,9 @@ citation-location: margin
 number-sections: true
 ---
 
-This post will form the foundation of a sequence of posts on various parallelization strategies used during training and inference of transformer models. The goal is simple: implement several commonly used parallelization strategies using NumPy, such that a (tiny) transformer model can train[^1].
+
+This post will form the foundation of a sequence of posts on various parallelization strategies used during training and inference of transformer models.
+The goal is simple: implement several commonly used parallelization strategies using NumPy, such that a (tiny) transformer model can train[^1].
 
 [^1]: Code is stored at [GitHub](https://github.com/lweitkamp/transformer_parallelisms).
 
@@ -37,55 +39,14 @@ MPI it is! This solves issue (1). Now let's look a bit at MPI and see how we can
 
 ## Introduction to MPI
 
-MPI, the *message passing interface*, is a standard for message passing on parallel architectures. As such, it specifies a range of protocols to communicate between processes but does not describe the underlying algorithms to do so. We will use the `mpi4py` python package that implements the major message passing protocols. We'll be re-hashing the main tutorials over at the `mpi4py` docs so feel free to skip the next section and go to @sec-numpy if you are familiar with the basics.
-
-MPI works with groups of processes, the main one being `MPI.COMM_WORLD` which stores *all* processes[^5]. Each process is identified by it's *rank*, a unique value in `[0 world_size-1]` with `world_size` being the total number of processes. In `mpi4py` we can get the basics going as follows, printing out each rank and the total world size[^6].
-
-[^5]: We will discuss creating groups if we ever get to 2 or 3D parallelism.
-
-[^6]: The printing does not have to be in order of rank!
-
-``` python
-from mpi4py import MPI
-
-comm = MPI.COMM_WORLD
-size = comm.Get_size()
-rank = comm.Get_rank()
-
-print(f"Rank {rank} of {size}")
-```
-
-### Sending Data
-
-We can send data *point-to-point* from one rank to another using `comm.send` and `comm.isend`[^665]. The latter will be useful for something like pipeline parallelism where we need to send the output of one layer to the next. Then there is `comm.broadcast` which sends data from one process to all other processes. 
-
-[^665]: any operation prefixed with `i` performs non-blocking; it won't wait for the data to be sent before moving on.
+MPI, the *message passing interface*, is a standard for message passing on parallel architectures. As such, it specifies a range of protocols to communicate between processes but does not describe the underlying algorithms to do so. We will use the `mpi4py` python package that implements the major message passing protocols.
 
 
-The main reason *we* need MPI is because of the message passing protocols such as *broadcasting*, where we send data from one process to all other processes[^666]:
+## Adding NumPy in the Mix
 
-``` python
-if rank == 0:
-    data = [(i+1)**2 for i in range(size)]
-else:
-    data = None
+The `mpi4py` library comes with support for NumPy arrays with some caveats. Documentation is a bit sparse, but in most cases you can just go with the capitalized version: `All_reduce`, `Scatter`, ..., etc. We also don't need all the ops, but we will need is support for the following[^8] operations:
 
-data = comm.bcast(data, root=0)
-```
-[^666]: Broadcasting from Rank 0: ![](images/ops.svg){fig-align="center" width="543"}
-
-Depending on the changes we make to the data, we can choose to *gather* 
-
- With the data in place, each process can do some work and we can *gather* the results back to a single process or *all gather* it back to all processes. If we need to do the same operation on the data we can also *scatter* the data, chunking it and sending each process a piece of the total.
-
-
-## Adding NumPy in the Mix {#sec-numpy}
-
-All the examples above are clear-cut for simple scalars or lists, but what we need is something that can work with NumPy `ndarrays` that are at least 3 dimensional[^7]. But we don't need to go crazy with it either, all we need is support for the following[^8] operations:
-
-[^7]: Mostly concerned with objects of shape `(batch_size, seq_len, d_model)`.
-
-[^8]: This list is compiled from a crawl of the [Megatron-LM](https://github.com/NVIDIA/Megatron-LM) and [TeraPipe](https://github.com/zhuohan123/terapipe) codebases. Scatter is added because I wanted a way to scatter the parameters of a sequental model to parallel models.
+[^8]: This list is compiled from a crawl of the [Megatron-LM](https://github.com/NVIDIA/Megatron-LM) and [TeraPipe](https://github.com/zhuohan123/terapipe) codebases.
 
 -   `all_reduce`
 -   `all_gather`
@@ -93,13 +54,9 @@ All the examples above are clear-cut for simple scalars or lists, but what we ne
 -   `scatter`
 -   `reduce_scatter`
 
-Now it also makes more sense (to me at least) why Gloo has at least `broadcast` and `all_reduce` ready for GPUs! If it turns out that we need to add more ops to the list, we can do that in subsequent posts.
-
-We can't simply add NumPy `ndarrays` to the MPI operations we discussed earlier. For NumPy, we have to go **uppercase** with it. That's right: `All_reduce`, `Scatter`, `All_gather`, .... They all work perfectly fine if the NumPy data is contiguous in memory! Let's start with the easiest ones and work our way to more difficult ops. I'm trying to keep it somewhat conform to how PyTorch does it, so whenever possible the operation is in-place (or in-place-ish).
+I'm trying to keep it somewhat conformed to how PyTorch does it, so whenever possible the operation is in-place (or in-place-ish).
 
 ### Broadcasting
-
-Actually, I was lying. For this operation we will not even need to go uppercase. It's very easy in fact:
 
 ``` python
 def broadcast(
