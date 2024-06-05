@@ -17,78 +17,41 @@ citation-location: margin
 # Introduction
 Tensor parallel, introduced in the Megatron-LM paper by NVidia as *intra-layer model-parallelism*, is a technique for sharding model parameters across GPUs to reduce memory costs.
 
-There are plenty of blog-posts out there on tensor parallelism[^1]. They will go over the basics of tensor parallel: Split the linear layers on rows or columns, the attention is split on the head dim. In this post I want to focus primarily on the following:
+This post explores tensor parallelism, based on my experience implementing it in NuMPItron, a small library for distributed transformer training using NumPy and MPI[^1].
+Many existing blog posts cover the basics of tensor parallelism—such as splitting linear layers on rows or columns and dividing attention heads—this post will focus on:
 
-- The embedding table and the loss function. Changes for the MLP and the attention mechanism are often highlighted but the changes for these layers are not actually that much.
+[^1]: [NuMPItron](https://github.com/lweitkamp/numpitron)
 
-- What changes are involved when using the 'shazeer' architecture.
+- The embedding table and the loss function.
 
-- The interplays between tensor parallel and other forms of parallel training. 
-Most of the insights in this post came from working on NuMPItron, a small library for transformer training using NumPy and MPI[^2] that currently supports tensor parallelism.
+- Changes involved when using the 'shazeer' architecture.
 
-[^1]: ...
+- How tensor parallel integrates with other forms of parallel training.
 
-[^2]: [NuMPItron](https://github.com/lweitkamp/numpitron)
+Tensor parallelism, like pipeline model parallelism (inter-layer), requires invasive code changes[^2] and is as slow as the slowest device communication. Hence, it is recommended to use tensor parallelism within a single node with high-speed communication like NVLink. Typically, $N_\text{tp} = 8$, splitting the model weights over 8 devices, is the default for *large* runs.
 
-## In Short
-If we are using $TP$ number of GPUs, the transformer model changes approximately as follows:
-
-1. The embedding matrix of size $d_{vocab} \times d_{model}$ is split on the vocab dim, each GPU has a chunk of $\frac{d_\text{vocab}}{TP} \times d_\text{model}$[^3].
-
-2. The attention layer QKV and O matrices of size $d_\text{model} \times n_\text{heads} \times d_\text{head}$ is split on the head dim, with each GPU having a chunk of $d_\text{model} \times \frac{n_\text{heads}}{TP} \times d_\text{head}$.
-
-3. The MLP linear layers of size $4 \cdot d_{model} \times  d_\text{model}$ are split on the model dim, with each GPU having a chunk of $4 \cdot d_{model} \times  \frac{d_\text{model}}{TP}$ per linear layer.
-
-[^3]: For this whole post we will assume **tied embeddings**, the same matrix used to embed tokens is used to un-emebed them. This is common practice and is used for XYZ.
-
-It's a relatively straightforward way to divide up a model into $TP$ chunks. Keep in mind that other layers such as normalization are not chunked, these are active on all devices. It's also not just used for training, but can also be applied during inference! This is especially useful if you are running a homebrew setup and want to inference LLMs that are exceedingly large (70B range). 
-
-There are some major downsides to this approach. As with pipeline model parallelism (inter-layer), it will require some invasive code changes[^4]. It is also as slow as your slowest device communication, which is why it is recommended to use **within** a single node with preferably high speed communication like NVLink. This is also why the value for $TP = 8$ will occur all over the place and is typically the default value for large runs.
-
-[^4]: there are several frameworks supporting it. Megatron-LM is the OG. Since 2023, Microsoft DeepSpeed has support for tensor parallel models too and since 2024 Nanotron by Hugginface also supports tensor parallel training.
+[^2]: there are several frameworks supporting it. Megatron-LM is the OG. Since 2023, Microsoft DeepSpeed has support for tensor parallel models too and since 2024 Nanotron by Hugginface also supports tensor parallel training.
 
 
 # Tensor Parallel Transformer
 
-We start at the beginning, where we have a batch of tokens that are **broadcasted** to each GPU. For ease of comprehension, let's limit ourselves to $TP=2$.
+We begin with a batch of tokens `BROADCAST` to each device.
 
 ## Input Embedding
-The embedding table takes as input token indices and outputs an embedding per token. With $N_\text{batch} \times N_\text{ctx}$ input token indices, the output will be $N_\text{batch} \times N_\text{ctx} \times d_\text{model}$.
+The embedding layer takes a token index, locates the corresponding row in the embedding table, and returns that $d_\text{model}$ dimensional row.
+In a tensor parallel model, the rows are divided into chunks across devices.
 
-Each GPU has $\frac{d_\text{vocab}}{2} \times d_\text{model}$ of the embedding table in memory. What happens to GPU 0's table lookup when it sees token index $d_\text{vocab} - 1$? Similarly, what would GPU 1 do if it encounters token index $0$?
+An issue arises when a device encounters a token index outside its chunk, which can be solved by masking.
+Each device returns a tensor of size (batch size, sequence length, $d_\text{model}$), filling out-of-bounds tokens for its chunk with zeros.
+Once each device completes this step, an `ALLREDUCE` operation[^3] ensures that masked indices are properly filled across all devices.
 
-The answer is masking: if the token index falls out of range of the current GPU's chunk, simply pad that output vector with zeros. I've depicted this in the figure below:
+[^3]: `ALLREDUCE` counter forward pass: $1 \times N_\text{batch} \times N_\text{ctx} \times d_\text{model}$.
+
+The figure below visualizes this process. If you'd rather see it implemented, refer to the [NuMPItron](https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/nn/embedding.py#L44-L67) codebase.
 
 ![](embedding_tensor_parallel.png)
 
-Here, the tokens are broadcast to both GPUs, and both GPUs figure out what to mask and what to embed - the output at this point will already be $N_\text{batch} \times N_\text{ctx} \times d_\text{model}$. Following this the `ALLREDUCE`[^5] ensures that masked indices are properly filled for both devices.
-
-[^5]: . `ALLREDUCE` counter forward pass: $1 \times N_\text{batch} \times N_\text{ctx} \times d_\text{model}$.
-
-In NuMPItron I've implemented the masking as follows[^6]:
-
-[^6]: [GitHub](https://github.com/) @TODO
-
-```python
-def forward(self, inputs: np.ndarray) -> np.ndarray:
-	# Figure out this GPU's chunk start and end.
-	chunk_start = npdist.tensor_parallel_rank() * self.embedding.data.shape[1]
-	chunk_end = chunk_start + self.embedding.data.shape[1]
-	mask = np.logical_or(inputs < chunk_start, inputs >= chunk_end)
-
-	# Set tokens to chunk range, mask tokens outside range.
-	inputs = inputs - chunk_start
-	inputs[mask] = 0
-
-	# Take the correct embeddings and mask outside range.
-	inputs_embedding = np.take(self.embedding.data.T, inputs, axis=0)
-	inputs_embedding[mask, :] = 0.0
-
-	npdist.all_reduce(inputs_embedding, group=npdist.tensor_parallel_group())
-	return inputs_embedding
-```
-
-Are there any alternatives to this? Why wouldn't we slice the tensor on the $d_\text{model}$ dim instead? I think this would be straightforward - each device would create a $N_\text{batch} \times N_\text{ctx} \times \frac{d_\text{model}}{2}$ tensor. It wouldn't require masking, but it *would* require an `ALLGATHER`, which has a worse worst-case complexity.
+Are there any alternatives to this? Why wouldn't we slice the tensor on the $d_\text{model}$ dim instead? I think this would be straightforward - each device would create a full batch size by sequence length by $\frac{d_\text{model}}{N_\text{tp}}$ tensor. It wouldn't require masking, but it *would* require an `ALLGATHER`, which has a worse worse complexity vs `ALLREDUCE`.
 
 
 ## Attention
