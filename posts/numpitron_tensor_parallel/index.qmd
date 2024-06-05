@@ -15,12 +15,12 @@ citation-location: margin
 ---
 
 # Introduction
-Tensor parallel, introduced in the Megatron-LM paper by NVidia as *intra-layer model-parallelism*, is a technique for sharding model parameters across GPUs to reduce memory costs.
+Tensor parallel, introduced in the Megatron-LM paper by NVidia as *intra-layer model-parallelism*, is a technique for sharding model parameters across GPUs to reduce memory costs. It's typically used in training large models where a single layer cannot fit into a GPU by itself.
 
 This post explores tensor parallelism, based on my experience implementing it in NuMPItron, a small library for distributed transformer training using NumPy and MPI[^1].
 Many existing blog posts cover the basics of tensor parallelism—such as splitting linear layers on rows or columns and dividing attention heads—this post will focus on:
 
-[^1]: [NuMPItron](https://github.com/lweitkamp/numpitron)
+[^1]: [NuMPItron](https://github.com/lweitkamp/numpitron). Since matmuls in CPUs are (very quickly) compute-bound, tensor parallelism will actually speed training up by quite a bit.
 
 - The embedding table and the loss function.
 
@@ -28,7 +28,7 @@ Many existing blog posts cover the basics of tensor parallelism—such as splitt
 
 - How tensor parallel integrates with other forms of parallel training.
 
-Tensor parallelism, like pipeline model parallelism (inter-layer), requires invasive code changes[^2] and is as slow as the slowest device communication. Hence, it is recommended to use tensor parallelism within a single node with high-speed communication like NVLink. Typically, $N_\text{tp} = 8$, splitting the model weights over 8 devices, is the default for *large* runs.
+Tensor parallelism, like pipeline model parallelism (inter-layer), requires invasive code changes[^2] and is as slow as the slowest device communication. Hence, it is recommended to use tensor parallelism within a single node with high-speed communication like NVLink. Typically, $N_\text{tp} = 8$, splitting the model weights over 8 devices, is the default for *large* runs. 
 
 [^2]: there are several frameworks supporting it. Megatron-LM is the OG. Since 2023, Microsoft DeepSpeed has support for tensor parallel models too and since 2024 Nanotron by Hugginface also supports tensor parallel training.
 
