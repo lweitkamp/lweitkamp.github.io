@@ -15,10 +15,10 @@ citation-location: margin
 ---
 
 # Introduction
-Tensor parallel, introduced in the Megatron-LM paper by NVidia as *intra-layer model-parallelism*, is a technique for sharding model parameters across GPUs to reduce memory costs. It's typically used in training large models where a single layer cannot fit into a GPU by itself.
+Tensor parallel, introduced in the Megatron-LM paper by NVidia as *intra-layer model-parallelism*, is a technique for sharding model parameters across devices to reduce memory costs. It's typically used in training large models where a single layer cannot fit into a device by itself.
 
 This post explores tensor parallelism, based on my experience implementing it in NuMPItron, a small library for distributed transformer training using NumPy and MPI[^1].
-Many existing blog posts cover the basics of tensor parallelism—such as splitting linear layers on rows or columns and dividing attention heads—this post will focus on:
+Many existing blog posts cover the basics of tensor parallelism—such as splitting linear layers on rows or columns and dividing attention heads—this post will cover that but it will focus on:
 
 [^1]: [NuMPItron](https://github.com/lweitkamp/numpitron). Since matmuls in CPUs are (very quickly) compute-bound, tensor parallelism will actually speed training up by quite a bit.
 
@@ -57,17 +57,20 @@ Are there any alternatives to this? Why wouldn't we slice the tensor on the $d_\
 ## Attention
 The attention layer transforms the inputs into Query, Key, and Value tensors with weights $W_Q, W_K, W_V,$ each of shape $d_\text{model} \times n_\text{heads} \times d_\text{head}$. Each head calculates the attention weights and the attention values separately, and projects it back to a shared representation with weight matrix $W_O$ of shape $d_\text{head} \times n_\text{heads} \times d_\text{model}$.
 
-Because values are calculated separately, it is simple to split computation along each head, which is what tensor parallel does. Each GPU will therefore have in total $4 \times d_\text{model} \times \frac{N_\text{heads}}{2} \times d_\text{head}$ weights in memory (we assume no biases for the attention layer). An `ALLREDUCE`[^7] collects the output per device. 
+Because computation is done separately per head, tensor parallel distributes the heads over the devices:
 
-[^7]: . `ALLREDUCE` counter forward pass: $\large(N_\text{batch} \times N_\text{ctx} \times d_\text{model}\large) \large(1 + N_\text{layers}\large)$, backward pass: $N_\text{layers} \times N_\text{batch} \times N_\text{ctx} \times d_\text{model}$
+![](attention_tensor_parallel.png)
 
+This ensures that the softmax attention weights are valid. Each device will therefore have in total $4 \times d_\text{model} \times \frac{N_\text{heads}}{2} \times d_\text{head}$ weights in memory (we assume no biases for the attention layer). An `ALLREDUCE`[^7] collects the output per device at the end of the forward pass and also at the end of the backward pass.
 
-### Grouped/Multi-Query Attention
-Multi-query attention (MQA) is a modification to the transformer model where the key and value head size is reduced from $N_\text{heads}$ to $1$ to vastly reduce memory consumption when decoding. Grouped query attention (GQA) was introduced more recently as an interpolation between vanilla and multi-query attention to ensure quality does not degrade too much by the reduction in total parameters. 
+[^7]: `ALLREDUCE` counter forward pass: $\large(N_\text{batch} \times N_\text{ctx} \times d_\text{model}\large) \large(1 + N_\text{layers}\large)$, backward pass: $N_\text{layers} \times N_\text{batch} \times N_\text{ctx} \times d_\text{model}$
 
-We have a bit of an issue when using MQA with $TP=8$, since we can't divide the single head to each GPU. A practical solution to this is to replicate the head to $TP$ size effectively using the same head on each device. In general you will see that GQA is used more often and it is set to 8 specifically to serve 8 GPUs in parallel[^8].
+## Grouped/Multi-Query Attention
+Multi-query attention (MQA) is a modification to the transformer model where the key and value head size is reduced from $N_\text{heads}$ to $1$ to vastly reduce memory consumption when decoding. Grouped query attention (GQA) was introduced more recently as an interpolation between vanilla and multi-query attention to ensure quality does not degrade too much by the reduction in total parameters.
 
-[^8]: Trainium GPUs have similar issue since they come in 32 per node, they also advise to replicate the heads: [https://awsdocs-neuron.readthedocs-hosted.com/en/latest/libraries/neuronx-distributed/api_guide.html#gqa-qkv-linear-module](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/libraries/neuronx-distributed/api_guide.html#gqa-qkv-linear-module).
+We have a bit of an issue when using MQA with $TP=8$, since we can't divide the single head to each device. A practical solution to this is to replicate the head to $TP$ size effectively using the same head on each device. In general you will see that GQA is used more often and it is set to 8 specifically to serve 8 devices in parallel[^8].
+
+[^8]: Trainium devices have similar issue since they come in 32 per node, they also advise to replicate the heads: [https://awsdocs-neuron.readthedocs-hostedlcom/en/latest/libraries/neuronx-distributed/api_guide.html#gqa-qkv-linear-module](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/libraries/neuronx-distributed/api_guide.html#gqa-qkv-linear-module).
 
 
 ## Feed Forward Network
@@ -81,11 +84,11 @@ Depicted below is a 2D matrix multiplication, something like $xW$. We can shard 
 
 ![](2d_matmul.png)
 
-If we do a column-parallel sharding strategy, we end up with complete sums but the results are sharded across GPUs, requiring an `ALLGATHER` operation.
+If we do a column-parallel sharding strategy, we end up with complete sums but the results are sharded across devices, requiring an `ALLGATHER` operation.
 
 ![](column_parallel.png)
 
-Looking at the row-parallel strategy instead, we end up with partial sums across GPUs that require an `ALLREDUCE`.
+Looking at the row-parallel strategy instead, we end up with partial sums across devices that require an `ALLREDUCE`.
 
 ![](row_parallel.png)
 
@@ -103,13 +106,23 @@ Swish Gated Linear Units (SwiGLU) combine the Swish activation function[^11] wit
 $$
 \large \text{FFN}_\text{SwiGLU} = (\text{Swish}_\beta(x W_1) \otimes xV) W_2
 $$
-Care must be taken to ensure the weight matrices $W_1$, $W_2$ and $V$ are of the correct dimensionality, but otherwise a tensor parallel strategy is pretty straightforward: $W_1$ and $V$ are column-parallel, and $W_2$ is row-parallel. Therefore, it also has the same communication overhead.
 
+Implementations tend to try and ensure that the SwiGLU does not lose any parameters when compared to the vanilla MLP[^12], but otherwise a tensor parallel strategy is pretty straightforward: $W_1$ and $V$ are column-parallel, and $W_2$ is row-parallel. Therefore, it also has the same communication overhead.
+
+[^12]: See [The Case for Co-Designing Model Architectures with Hardware](https://arxiv.org/abs/2401.14489). SwiGLU recommends $\frac{8}{3}d_\text{head}$ instead of the MLPs $4 \cdot d_\text{model}$, but this default is sub-optimal.
 
 ## Un-Embedding and Loss Calculation
-We un-embed with the same sharded matrix as we embed, which means we will have the outputs logits split into $TP$ chunks.
+We un-embed with the same sharded matrix as we embed, which means we will have the outputs logits split into $TP$ chunks. If the other layers only required a smart init upfront (divide head dim or rows or cols by #devices) and some all-reduce terms after, the loss calculation is something else.
 
-It's not mentioned in detail in the paper, but the loss calculation might be the most intrusive part in terms of code editing. 
+First, lets see where we are at after the un-embedding. The figure below depicts the logits after the un-embedding. For each token we have a set of logit predictions of `vocab_size` length.
+
+![](logits.png)
+
+We again have a masking challenge here to ensure the correct label is used per chunk, but we also need to collect the sum of exponentiated logits for a softmax calculation required in the backward pass.
+
+
+All in all, that's a lot of reductions happening. Thankfully, the length of the messages are quite small () so I guess it was not worth going into detail about it in the Megatron-LM paper.
+
 
 
 # Communication Overhead
