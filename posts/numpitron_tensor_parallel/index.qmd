@@ -162,23 +162,26 @@ This is a very useful technique to use, but when used naively it requires two ad
 [^77]: See [Reducing Activation Recomputation in Large Transformer Models](https://arxiv.org/abs/2205.05198).
 
 
-# Compatability with other forms of parallelization
-We will discuss the most relevant ones: (fully sharded) data parallel, pipeline parallel, sequence parallel, and more recent, expert parallel. When in doubt, always check Stas Bekman's cheat sheet: [Which Strategy To Use When](https://github.com/stas00/ml-engineering/tree/master/training/model-parallelism#which-strategy-to-use-when).
-
+# Compatibility with Other Forms of Parallelization
+We will discuss the most relevant forms: (fully sharded) data parallel, pipeline parallel, sequence parallel, and the more recent expert parallel. When in doubt, always check Stas Bekman's cheat sheet: [Which Strategy To Use When](https://github.com/stas00/ml-engineering/tree/master/training/model-parallelism#which-strategy-to-use-when). Here you can also see that in general the 3D parallel setup (data + pipeline + tensor) is a popular and efficient approach.
 
 ## (Fully Sharded) Data Parallel
-Basic distributed data parallel has no compatability issues with tensor parallelism and is very complementary. With 4 devices and $N_\text{TP}=2$, we would shard the parameters to two devices each, where each of the two devices gets half the global batch size.
+Basic distributed data parallelism has no compatibility issues with tensor parallelism and is highly complementary. With four devices and $N_\text{TP}=2$, we shard the parameters across two devices each, where each pair of devices gets half the global batch size. If you have both tensor parallelism and data parallelism in a multi-node setup, you typically set $N_\text{TP}$ for intra-node and use data parallelism for inter-node.
 
-Fully Sharded Data Parallel (FSDP) is an implementation of ZeRO-3, the scope of which is out of this blog post. FSDP is also compatible with tensor parallel. The gist of it is that tensor parallel is to sharding computation what FSDP is to sharding parameters. It is a highly optimized way of ensuring minimal memory requirement per GPU and that the model, the optimizer, and the hidden activations are sharded across as many GPUs as permitted.
+Fully Sharded Data Parallel (FSDP) is an implementation of ZeRO-3, which is beyond the scope of this blog post. FSDP is also compatible with tensor parallelism. As an analogy, tensor parallel is to sharding compute as FSDP is to sharding parameters. This highly optimized method ensures minimal memory requirements per device, with the model, optimizer, and hidden activations sharded across as many devices as possible.
 
 
 ## Pipeline Parallel
 Pipeline parallelism aims to distribute layers across devices. Like data parallel, pipeline parallel is often used in conjunction with tensor parallel delivering what Microsoft called '3D-parallel' training, allowing for very large scale model training.
-
 
 Pipeline is not required though, OPT-175B was trained using only tensor-parallel and FSDP on 992 GPUs[^65756]. So why would we want to add pipeline to the mix?
 
 [^65756]: How did this work? From the log-book, we have 8-way tensor parallel on 992 GPUs, leaving 124 groups of 8 GPUs for data parallel training. We also have a local batch size of 8 for each group and a context length of 2048.  Multiply 128 group by 8 local batch size by 2048 context length and we have 2_031_616, roughly 2M.
 
 ## Sequence Parallel
+
 ## Expert Parallel
+In mixture-of-experts (MoE) approaches, the size of the MLP layer is reduced, and multiple 'expert' MLPs are active per transformer layer. Experts are divided across available devices, with each token routed to a subset of the experts to induce sparsity in training. This results in a more powerful model with more parameters for the same compute budget.
+
+Combining tensor parallelism and expert parallelism is possible, but it might not be practical for the MLP 'expert' layer, as these layers are already reduced in size and distributed. However, it would still be efficient to apply tensor parallelism to the embedding table and the attention layer.
+
