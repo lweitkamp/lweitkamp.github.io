@@ -7,14 +7,13 @@ categories: [numpy, mpi]
 
 format:
   html:
-    toc: false
+    toc: true
     toc-expand: true
     toc-location: left
 reference-location: margin
 citation-location: margin
 ---
 
-# Introduction
 Tensor parallel, introduced in the Megatron-LM paper by NVidia as *intra-layer model-parallelism*, is a technique for sharding model parameters across devices to reduce memory costs. It's typically used in training large models where a single layer cannot fit into a device by itself.
 
 This post explores tensor parallelism, based on my experience implementing it in NuMPItron, a small library for distributed transformer training using NumPy and MPI[^1].
@@ -35,40 +34,40 @@ Tensor parallelism, like pipeline model parallelism (inter-layer), requires inva
 
 # Tensor Parallel Transformer
 
-We begin with a batch of tokens `BROADCAST` to each device.
+We begin with a batch of tokens `BROADCAST` to each device. For ease of understanding we have two devices: <mark style="background: #b2f2bb!important">device 1</mark> and <mark style="background: #ffc9c9!important">device 2</mark>.
 
 ## Input Embedding
-The embedding layer takes a token index, locates the corresponding row in the embedding table, and returns that $d_\text{model}$ dimensional row.
-In a tensor parallel model, the rows are divided into chunks across devices.
+The embedding layer takes a token index, locates the corresponding row in the embedding table, and returns that $D_\text{model}$ dimensional row.
+In a tensor parallel model, the vocab dimension (rows) of $N_\text{vocab}$ are divided into chunks across devices.
 
 An issue arises when a device encounters a token index outside its chunk, which can be solved by masking.
-Each device returns a tensor of size (batch size, sequence length, $d_\text{model}$), filling out-of-bounds tokens for its chunk with zeros.
-Once each device completes this step, an `ALLREDUCE` operation[^3] ensures that masked indices are properly filled across all devices.
-
-[^3]: `ALLREDUCE` counter forward pass: $1 \times N_\text{batch} \times N_\text{ctx} \times d_\text{model}$.
+Each device returns a tensor of size (batch size, sequence length, $D_\text{model}$), filling out-of-bounds tokens for its chunk with zeros.
+Once each device completes this step, an `ALLREDUCE` operation ensures that masked indices are properly filled across all devices.
 
 The figure below visualizes this process. If you'd rather see it implemented, refer to the [NuMPItron](https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/nn/embedding.py#L44-L67) codebase.
 
-![](embedding_tensor_parallel.png)
+![All tokens are present on all devices. The embedding forward pass performs a masked-lookup per device and the results are `ALLREDUCE`'d.](embedding_tensor_parallel.png)
 
-Are there any alternatives to this? Why wouldn't we slice the tensor on the $d_\text{model}$ dim instead? I think this would be straightforward - each device would create a full batch size by sequence length by $\frac{d_\text{model}}{N_\text{tp}}$ tensor. It wouldn't require masking, but it *would* require an `ALLGATHER`, which has a worse worse complexity vs `ALLREDUCE`.
+Are there any alternatives to this? Why wouldn't we slice the tensor on the $D_\text{model}$ dim instead? I think this would be straightforward - each device would create a full batch size by sequence length by $\frac{D_\text{model}}{N_\text{tp}}$ tensor. It wouldn't require masking, but it *would* require an `ALLGATHER`, which has a worse worse complexity vs `ALLREDUCE`.
 
+There are no reduction in the backward pass, but you will need to ensure that the correct indices in the embedding table are being updated by masking.
 
 ## Attention
-The attention layer transforms the inputs into Query, Key, and Value tensors with weights $W_Q, W_K, W_V,$ each of shape $d_\text{model} \times n_\text{heads} \times d_\text{head}$. Each head calculates the attention weights and the attention values separately, and projects it back to a shared representation with weight matrix $W_O$ of shape $d_\text{head} \times n_\text{heads} \times d_\text{model}$.
+The attention layer transforms the inputs into Query, Key, and Value tensors with weights $W_Q, W_K, W_V,$ each of shape $D_\text{model} \times n_\text{heads} \times d_\text{head}$. Each head calculates the attention weights and the attention values separately, and projects it back to a shared representation with weight matrix $W_O$ of shape $d_\text{head} \times n_\text{heads} \times D_\text{model}$.
 
-Because computation is done separately per head, tensor parallel distributes the heads over the devices:
+Because computation is done separately per head, tensor parallel distributes the heads over the devices. It's depicted somewhat simplified below[^50]:
 
-![](attention_tensor_parallel.png)
+[^50]: Each token has several attention heads, this is still reflected in the attention weights but picture `seq_len` outputs.
 
-This ensures that the softmax attention weights are valid. Each device will therefore have in total $4 \times d_\text{model} \times \frac{N_\text{heads}}{2} \times d_\text{head}$ weights in memory (we assume no biases for the attention layer). An `ALLREDUCE`[^7] collects the output per device at the end of the forward pass and also at the end of the backward pass.
+![Query, key, value, and output heads are created sharded over devices. Attention is calculated per head and transformed to an output value which is `ALLREDUCE`d.](attention_tensor_parallel.png)
 
-[^7]: `ALLREDUCE` counter forward pass: $\large(N_\text{batch} \times N_\text{ctx} \times d_\text{model}\large) \large(1 + N_\text{layers}\large)$, backward pass: $N_\text{layers} \times N_\text{batch} \times N_\text{ctx} \times d_\text{model}$
+This ensures that the softmax attention weights are valid. Each device will therefore have in total $4 \times D_\text{model} \times \frac{N_\text{heads}}{2} \times d_\text{head}$ weights in memory (we assume no biases for the attention layer). An `ALLREDUCE` collects the output per device at the end of the forward pass and also at the end of the backward pass.
+
 
 ## Grouped/Multi-Query Attention
 Multi-query attention (MQA) is a modification to the transformer model where the key and value head size is reduced from $N_\text{heads}$ to $1$ to vastly reduce memory consumption when decoding. Grouped query attention (GQA) was introduced more recently as an interpolation between vanilla and multi-query attention to ensure quality does not degrade too much by the reduction in total parameters.
 
-We have a bit of an issue when using MQA with $TP=8$, since we can't divide the single head to each device. A practical solution to this is to replicate the head to $TP$ size effectively using the same head on each device. In general you will see that GQA is used more often and it is set to 8 specifically to serve 8 devices in parallel[^8].
+We have a bit of an issue when using MQA with $N_\text{TP}=8$, since we can't divide the single head to each device. A practical solution to this is to replicate the head to $N_\text{TP}$ size effectively using the same head on each device. In general you will see that GQA is used more often and it is set to 8 specifically to serve 8 devices in parallel[^8].
 
 [^8]: Trainium devices have similar issue since they come in 32 per node, they also advise to replicate the heads: [https://awsdocs-neuron.readthedocs-hostedlcom/en/latest/libraries/neuronx-distributed/api_guide.html#gqa-qkv-linear-module](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/libraries/neuronx-distributed/api_guide.html#gqa-qkv-linear-module).
 
@@ -82,19 +81,18 @@ This means we have two weight matrices including biases that we need to shard ac
 
 Depicted below is a 2D matrix multiplication, something like $xW$. We can shard computation along its columns ("column-parallel") or along its rows ("row-parallel").
 
-![](2d_matmul.png)
+![A generic matrix multiplication.](2d_matmul.png)
 
 If we do a column-parallel sharding strategy, we end up with complete sums but the results are sharded across devices, requiring an `ALLGATHER` operation.
 
-![](column_parallel.png)
+![A column-parallel matrix multiplication.](column_parallel.png)
 
 Looking at the row-parallel strategy instead, we end up with partial sums across devices that require an `ALLREDUCE`.
 
-![](row_parallel.png)
+![A row-parallel matrix multiplication.](row_parallel.png)
 
-Following the matrix multiplication with a ReLU or any nonlinearity, we can see that row-parallel will have some issues here, $\text{ReLU}(-5) + \text{ReLU}(14) \neq \text{ReLU}(9)$. Performing a column-parallel strategy **first** ensures we can perform any nonlinearity since the values are complete already. We can follow it with a row-parallel matrix multiplication and `ALLREDUCE`[^10] the results for minimal communication overhead. An additional `AllREDUCE` is required at the end of the backward pass too.
+Following the matrix multiplication with a ReLU or any nonlinearity, we can see that row-parallel will have some issues here, $\text{ReLU}(-5) + \text{ReLU}(14) \neq \text{ReLU}(9)$. Performing a column-parallel strategy **first** ensures we can perform any nonlinearity since the values are complete already. We can follow it with a row-parallel matrix multiplication and `ALLREDUCE` the results for minimal communication overhead. An additional `AllREDUCE` is required at the end of the backward pass too.
 
-[^10]: `ALLREDUCE` counter forward pass: $\large( N_\text{batch} \times N_\text{ctx} \times d_\text{model}\large) \large(1 + 2 \times N_\text{layers}\large)$, backward pass: $2 \times N_\text{layers} \times N_\text{batch} \times N_\text{ctx} \times d_\text{model}$
 
 For the bias terms, we need to ensure that the column-parallel multiplication adds the bias **only on a single device**, and for the row-parallel multiplication we can split the bias.
 
@@ -109,24 +107,78 @@ $$
 
 Implementations tend to try and ensure that the SwiGLU does not lose any parameters when compared to the vanilla MLP[^12], but otherwise a tensor parallel strategy is pretty straightforward: $W_1$ and $V$ are column-parallel, and $W_2$ is row-parallel. Therefore, it also has the same communication overhead.
 
-[^12]: See [The Case for Co-Designing Model Architectures with Hardware](https://arxiv.org/abs/2401.14489). SwiGLU recommends $\frac{8}{3}d_\text{head}$ instead of the MLPs $4 \cdot d_\text{model}$, but this default is sub-optimal.
+[^12]: See [The Case for Co-Designing Model Architectures with Hardware](https://arxiv.org/abs/2401.14489). SwiGLU recommends $\frac{8}{3}d_\text{head}$ instead of the MLPs $4 \cdot D_\text{model}$, but this default is sub-optimal.
 
 ## Un-Embedding and Loss Calculation
-We un-embed with the same sharded matrix as we embed, which means we will have the outputs logits split into $TP$ chunks. If the other layers only required a smart init upfront (divide head dim or rows or cols by #devices) and some all-reduce terms after, the loss calculation is something else.
-
-First, lets see where we are at after the un-embedding. The figure below depicts the logits after the un-embedding. For each token we have a set of logit predictions of `vocab_size` length.
-
-![](logits.png)
-
-We again have a masking challenge here to ensure the correct label is used per chunk, but we also need to collect the sum of exponentiated logits for a softmax calculation required in the backward pass.
+Since Megatron-LM assumes tied-embeddings, we un-embed with the same sharded matrix as we embed, which means the output logits will be split into $N_\text{TP}$ chunks. There are no reductions for the un-embedding layer in the forward pass, but you will need to `ALLREDUCE` the gradients at the end of the backward pass.
 
 
-All in all, that's a lot of reductions happening. Thankfully, the length of the messages are quite small () so I guess it was not worth going into detail about it in the Megatron-LM paper.
+Unlike other layers, which only required a smart initialization upfront (dividing head dimensions, rows, or columns by the number of devices) and some all-reduce operations afterward, the loss calculation is more complex. After un-embedding, each token has a set of logit predictions of $N_\text{vocab}$ length.
 
 
+![Logit activation magnitude per token. logits are sharded over devices along the vocab dimension.](logits.png)
 
-# Communication Overhead
+Our goal is to compute the softmax cross-entropy loss function[^99]: 
 
-## Activation Checkpointing
-> In Megatron-LM with activation checkpointing, each transformer block performs two allreduce operations of size batch × seq length × hidden dim in the forward propagation, **two all-reduce for forward re-computation** and two more in the backward propagation. The total communication per block is 12 × seq length × hidden dim since communication volume of an all-reduce is 2 × message size.
+$$
+\large \text{loss} = - \log (\text{logit}_\text{true label}) + \log(\sum \exp(\text{all logits}))
+$$
 
+assuming the maximum value has already been subtracted for numerical stability. The first step is to calculate the max logit value per token per device using an `ALLREDUCE`. This is a relatively cheap operation requiring communication of only $N_\text{batch} \times N_\text{ctx}$ values.
+
+[^99]: See the [Dive into Deep Learning](https://d2l.ai/chapter_linear-classification/softmax-regression-concise.html#softmax-revisited) page for a more precise definition.
+
+![There are three reductions in the loss calculation. The first is an `ALLREDUCE`-max logit value for a stable loss calculation. The second is a masked `ALLREDUCE` such that each device has the labeled logit activation. The third and last `ALLREDUCE` ensures the log-sum-exp value is the same on all devices.](loss_fn_allreduce.png)
+
+Next, we communicate the logit of the true label to all devices. This is done by checking if the label index is within the current device's chunk and masking it if it is not. An `ALLREDUCE` fills any masked locations, ensuring each device has the logit of the true label. The final communication step is the sum calculation: exponentiate the original logits per device, sum them, and perform the last `ALLREDUCE` of the day.
+
+
+All in all, that's a lot of reductions happening. Notably, however, is the fact that each of the reductions only communicates $N_\text{batch} \times N_\text{ctx}$ values. I guess it wasn't worth going into detail about it in the Megatron-LM paper.
+
+There are ways to reduce computational overhead by calculating the softmax required for the backward pass (we essentially have everything ready after communicating the log-sum-exp values) and even looking into fused cross-entropy[^101], but that is basically it.
+
+[^101]: [https://github.com/mgmalek/efficient_cross_entropy](https://github.com/mgmalek/efficient_cross_entropy).
+
+
+## Communication Overhead
+The table below gives us the forward and backward pass communications required across devices for the Megatron-LM style tensor parallel transformer.
+
+| Layer            | Forward Pass | Backward Pass |
+| ---------------- | ------------ | ------------- |
+| Input Embedding  | $N_\text{batch} \times N_\text{ctx} \times D_\text{model}$ | N/A |
+| Attention        | $N_\text{batch} \times N_\text{ctx} \times D_\text{model}$ | $N_\text{batch} \times N_\text{ctx} \times D_\text{model}$ |
+| MLP              | $N_\text{batch} \times N_\text{ctx} \times D_\text{model}$ | $N_\text{batch} \times N_\text{ctx} \times D_\text{model}$ |
+| Output Embedding | N/A | $N_\text{batch} \times N_\text{ctx} \times D_\text{model}$ |
+| Cross-Entropy    | $3 \cdot N_\text{batch} \times N_\text{ctx}$ | N/A |
+
+We need to keep in mind that the Attention and MLP layers are most important here, since these will happen at every layer. It does seem to scale quite bad in terms of sequence length, something I might cover in an upcoming post when I add sequence parallel to NuMPItron. 
+
+
+### Activation Checkpointing
+Hidden activations required for backward-pass calculations can quickly fill up device memory, and the larger the model size the faster memory fills up. To alleviate this somewhat, you can use *activation checkpointing*, which re-calculates the hidden activations during the backward pass by storing only the layer input instead.
+
+This is a very useful technique to use, but when used naively it requires two additional `ALLREDUCE` operations when re-calculating the forward pass activations for the backward pass. The Megatron-LM authors fixed this in favor of a more selective recomputation in the sequence parallel paper[^77].
+
+[^77]: See [Reducing Activation Recomputation in Large Transformer Models](https://arxiv.org/abs/2205.05198).
+
+
+# Compatability with other forms of parallelization
+We will discuss the most relevant ones: (fully sharded) data parallel, pipeline parallel, sequence parallel, and more recent, expert parallel. When in doubt, always check Stas Bekman's cheat sheet: [Which Strategy To Use When](https://github.com/stas00/ml-engineering/tree/master/training/model-parallelism#which-strategy-to-use-when).
+
+
+## (Fully Sharded) Data Parallel
+Basic distributed data parallel has no compatability issues with tensor parallelism and is very complementary. With 4 devices and $N_\text{TP}=2$, we would shard the parameters to two devices each, where each of the two devices gets half the global batch size.
+
+Fully Sharded Data Parallel (FSDP) is an implementation of ZeRO-3, the scope of which is out of this blog post. FSDP is also compatible with tensor parallel. The gist of it is that tensor parallel is to sharding computation what FSDP is to sharding parameters. It is a highly optimized way of ensuring minimal memory requirement per GPU and that the model, the optimizer, and the hidden activations are sharded across as many GPUs as permitted.
+
+
+## Pipeline Parallel
+Pipeline parallelism aims to distribute layers across devices. Like data parallel, pipeline parallel is often used in conjunction with tensor parallel delivering what Microsoft called '3D-parallel' training, allowing for very large scale model training.
+
+
+Pipeline is not required though, OPT-175B was trained using only tensor-parallel and FSDP on 992 GPUs[^65756]. So why would we want to add pipeline to the mix?
+
+[^65756]: How did this work? From the log-book, we have 8-way tensor parallel on 992 GPUs, leaving 124 groups of 8 GPUs for data parallel training. We also have a local batch size of 8 for each group and a context length of 2048.  Multiply 128 group by 8 local batch size by 2048 context length and we have 2_031_616, roughly 2M.
+
+## Sequence Parallel
+## Expert Parallel
