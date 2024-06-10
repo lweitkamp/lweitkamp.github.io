@@ -2,14 +2,14 @@
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
 
 <meta charset="utf-8">
-<meta name="generator" content="quarto-1.4.554">
+<meta name="generator" content="quarto-1.4.549">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 <meta name="author" content="Laurens Weitkamp">
-<meta name="dcterms.date" content="2023-05-01">
+<meta name="dcterms.date" content="2024-06-10">
 
-<title>Packing</title>
+<title>Packing Data for efficient Training and Inference</title>
 <style>
 code{white-space: pre-wrap;}
 span.smallcaps{font-variant: small-caps;}
@@ -21,40 +21,6 @@ ul.task-list li input[type="checkbox"] {
   width: 0.8em;
   margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
   vertical-align: middle;
-}
-/* CSS for syntax highlighting */
-pre > code.sourceCode { white-space: pre; position: relative; }
-pre > code.sourceCode > span { line-height: 1.25; }
-pre > code.sourceCode > span:empty { height: 1.2em; }
-.sourceCode { overflow: visible; }
-code.sourceCode > span { color: inherit; text-decoration: inherit; }
-div.sourceCode { margin: 1em 0; }
-pre.sourceCode { margin: 0; }
-@media screen {
-div.sourceCode { overflow: auto; }
-}
-@media print {
-pre > code.sourceCode { white-space: pre-wrap; }
-pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
-}
-pre.numberSource code
-  { counter-reset: source-line 0; }
-pre.numberSource code > span
-  { position: relative; left: -4em; counter-increment: source-line; }
-pre.numberSource code > span > a:first-child::before
-  { content: counter(source-line);
-    position: relative; left: -1em; text-align: right; vertical-align: baseline;
-    border: none; display: inline-block;
-    -webkit-touch-callout: none; -webkit-user-select: none;
-    -khtml-user-select: none; -moz-user-select: none;
-    -ms-user-select: none; user-select: none;
-    padding: 0 4px; width: 4em;
-  }
-pre.numberSource { margin-left: 3em;  padding-left: 4px; }
-div.sourceCode
-  {   }
-@media screen {
-pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
 }
 </style>
 
@@ -87,35 +53,6 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   }
 }</script>
 
-  <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
-  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
-
-<script type="text/javascript">
-const typesetMath = (el) => {
-  if (window.MathJax) {
-    // MathJax Typeset
-    window.MathJax.typeset([el]);
-  } else if (window.katex) {
-    // KaTeX Render
-    var mathElements = el.getElementsByClassName("math");
-    var macros = [];
-    for (var i = 0; i < mathElements.length; i++) {
-      var texText = mathElements[i].firstChild;
-      if (mathElements[i].tagName == "SPAN") {
-        window.katex.render(texText.data, mathElements[i], {
-          displayMode: mathElements[i].classList.contains('display'),
-          throwOnError: false,
-          macros: macros,
-          fleqn: false
-        });
-      }
-    }
-  }
-}
-window.Quarto = {
-  typesetMath
-};
-</script>
 
 <link rel="stylesheet" href="../../styles.css">
 </head>
@@ -158,14 +95,8 @@ window.Quarto = {
 <header id="title-block-header" class="quarto-title-block default toc-left page-columns page-full">
   <div class="quarto-title-banner page-columns page-full">
     <div class="quarto-title column-body">
-      <h1 class="title">Packing</h1>
-                                <div class="quarto-categories">
-                <div class="quarto-category">transformer</div>
-                <div class="quarto-category">trainign</div>
-                <div class="quarto-category">packing</div>
-                <div class="quarto-category">language modelling</div>
-              </div>
-                  </div>
+      <h1 class="title">Packing Data for efficient Training and Inference</h1>
+                      </div>
   </div>
     
   
@@ -181,7 +112,7 @@ window.Quarto = {
       <div>
       <div class="quarto-title-meta-heading">Published</div>
       <div class="quarto-title-meta-contents">
-        <p class="date">May 1, 2023</p>
+        <p class="date">June 10, 2024</p>
       </div>
     </div>
     
@@ -196,10 +127,17 @@ window.Quarto = {
     <h2 id="toc-title">On this page</h2>
    
   <ul>
-  <li><a href="#in-the-literature" id="toc-in-the-literature" class="nav-link active" data-scroll-target="#in-the-literature">In the Literature</a></li>
-  <li><a href="#potential-issues" id="toc-potential-issues" class="nav-link" data-scroll-target="#potential-issues">Potential Issues</a></li>
-  <li><a href="#packing-and-masking" id="toc-packing-and-masking" class="nav-link" data-scroll-target="#packing-and-masking">Packing and Masking</a></li>
-  <li><a href="#closing-thoughts" id="toc-closing-thoughts" class="nav-link" data-scroll-target="#closing-thoughts">Closing Thoughts</a></li>
+  <li><a href="#packing" id="toc-packing" class="nav-link active" data-scroll-target="#packing">Packing</a>
+  <ul class="collapse">
+  <li><a href="#literature-review" id="toc-literature-review" class="nav-link" data-scroll-target="#literature-review">Literature Review</a></li>
+  <li><a href="#dealing-with-cross-contamination" id="toc-dealing-with-cross-contamination" class="nav-link" data-scroll-target="#dealing-with-cross-contamination">Dealing with Cross Contamination</a>
+  <ul class="collapse">
+  <li><a href="#update-positional-information" id="toc-update-positional-information" class="nav-link" data-scroll-target="#update-positional-information">Update Positional Information</a></li>
+  <li><a href="#update-the-attention-mask" id="toc-update-the-attention-mask" class="nav-link" data-scroll-target="#update-the-attention-mask">Update the Attention Mask</a></li>
+  <li><a href="#thats-it" id="toc-thats-it" class="nav-link" data-scroll-target="#thats-it">That’s it!</a></li>
+  </ul></li>
+  <li><a href="#can-we-ignore-cross-contamination" id="toc-can-we-ignore-cross-contamination" class="nav-link" data-scroll-target="#can-we-ignore-cross-contamination">Can we Ignore Cross Contamination?</a></li>
+  </ul></li>
   </ul>
 </nav>
 </nav>
@@ -214,16 +152,23 @@ window.Quarto = {
 
 
 
-<p>When we add several sequences to a single batch sample, we are <strong>packing</strong> that sample. This is typically done to fill the context length of a sample and reduce the amount of padding. If we have a context length of <span class="math inline">\(c\)</span> with two sequences <span class="math inline">\(A\)</span> and <span class="math inline">\(B\)</span> of lengths <span class="math inline">\(k\)</span> and <span class="math inline">\(v\)</span> respectively, the following figure depicts a <em>packed</em> sample.</p>
+<p>The context length of transformer models is rapidly increasing with each new generation of frontier models. For instance, Google’s latest Gemini 1.5 model can process up to 1 million tokens, equivalent to 1 hour of video or approximately 700,000 words. This increase is driven by advancements in hardware and the development of more efficient algorithms tailored to the specific demands of long-context training<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>.</p>
+<div class="no-row-height column-margin column-container"><p><sup>1</sup>&nbsp;An orthogonal approach involves training with a short context but performing inference on a long context. Packing techniques can still be beneficial during inference.</p></div><p>Long contexts introduce several challenges: identifying data that inherently requires long contexts (such as books, podcasts, and videos) and efficiently handling smaller context data. Simply concatenating these documents and feeding them into an autoregressive transformer can lead to <em>cross-contamination</em> of sequences. For instance, predicting a sequence <code>S2</code> from an unrelated sequence <code>S1</code> becomes nearly impossible if there is a significant difference in their subject matter.</p>
+<p>The same issue arises during inference. If we dynamically batch tokens from different users, efficiency can be improved by grouping shorter conversations in the same batch. The solution to both of these issues is a technique called <em>packing</em>.</p>
+<section id="packing" class="level1 page-columns page-full">
+<h1>Packing</h1>
+<p>Packing sequences is a technique used in transformer models during training and inference to optimize the use of context length and reduce padding.</p>
+<p>Consider a transformer model with a context length denoted as <code>ctx</code>. Let’s take two sequences, <code>S1</code> and <code>S2</code>, with lengths <code>n</code> and <code>m</code> respectively, where <code>n + m &lt;= ctx</code>. If we treat these sequences separately, the total padding required would be <code>ctx - n + ctx - m</code> tokens. However, by packing these sequences together into a single context, we can significantly reduce the padding to only <code>ctx - n - m</code> tokens.</p>
+<p>The figure below illustrates the concept of packing two sequences.</p>
 <div class="quarto-figure quarto-figure-center">
 <figure class="figure">
-<p><img src="pack_sequences.svg" class="img-fluid figure-img"></p>
-<figcaption>Two sequences “packed”</figcaption>
+<p><img src="packed_sequences.png" class="img-fluid figure-img"></p>
+<figcaption>Two sequences “packed”.</figcaption>
 </figure>
 </div>
-<section id="in-the-literature" class="level2 page-columns page-full">
-<h2 class="anchored" data-anchor-id="in-the-literature">In the Literature</h2>
-<p>Packing is briefly described in most papers (in fact, most authors cite T5 for it), here are some from the literature:</p>
+<section id="literature-review" class="level2 page-columns page-full">
+<h2 class="anchored" data-anchor-id="literature-review">Literature Review</h2>
+<p>Packing is briefly described in most papers on language modelling (in fact, most authors cite T5 for it), here are some from the literature:</p>
 <table class="table">
 <thead>
 <tr class="header">
@@ -233,104 +178,69 @@ window.Quarto = {
 </thead>
 <tbody>
 <tr class="odd">
-<td>RoBERTa<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a></td>
+<td>RoBERTa<a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a></td>
 <td><em>“Each input is <strong><em>packed</em></strong> with full sentences sampled contiguously from one or more documents, such that the total length is at most 512 tokens.”</em></td>
 </tr>
 <tr class="even">
-<td>GPT-3<a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a></td>
+<td>GPT-3<a href="#fn3" class="footnote-ref" id="fnref3" role="doc-noteref"><sup>3</sup></a></td>
 <td><em>“During training we always train on sequences of the full nctx = 2048 token context window, <strong><em>packing</em></strong> multiple documents into a single sequence when documents are shorter than 2048, in order to increase computational efficiency.”</em></td>
 </tr>
 <tr class="odd">
-<td>T5<a href="#fn3" class="footnote-ref" id="fnref3" role="doc-noteref"><sup>3</sup></a></td>
+<td>T5<a href="#fn4" class="footnote-ref" id="fnref4" role="doc-noteref"><sup>4</sup></a></td>
 <td><em>“Whenever possible, we “<strong><em>pack</em></strong>” multiple sequences into each entry of the batch so that our batches contain roughly 216 = 65,536 tokens.”</em></td>
 </tr>
 <tr class="even">
-<td>T0<a href="#fn4" class="footnote-ref" id="fnref4" role="doc-noteref"><sup>4</sup></a></td>
+<td>T0<a href="#fn5" class="footnote-ref" id="fnref5" role="doc-noteref"><sup>5</sup></a></td>
 <td><em>“we use <strong><em>packing</em></strong> to combine multiple training examples into a single sequence to reach the maximum sequence length.”</em></td>
 </tr>
 </tbody>
 </table>
-<div class="no-row-height column-margin column-container"><div id="fn1"><p><sup>1</sup>&nbsp;<a href="https://arxiv.org/abs/1907.11692">RoBERTa: A Robustly Optimized BERT Pretraining Approach</a></p></div><div id="fn2"><p><sup>2</sup>&nbsp;<a href="https://arxiv.org/abs/2005.14165">Language Models are Few-Shot Learners</a></p></div><div id="fn3"><p><sup>3</sup>&nbsp;<a href="https://arxiv.org/abs/1910.10683">Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer</a></p></div><div id="fn4"><p><sup>4</sup>&nbsp;<a href="https://arxiv.org/abs/2110.08207">Multitask Prompted Training Enables Zero-Shot Task Generalization</a></p></div></div></section>
-<section id="potential-issues" class="level2">
-<h2 class="anchored" data-anchor-id="potential-issues">Potential Issues</h2>
-<p>Imagine we are using an autoregressive transformer decoder to predict token <span class="math inline">\(B_1\)</span> given a completely unrelated randomly sampled sentence <span class="math inline">\(A\)</span>. We are essentially predicting randomness. This is called <em>cross-contamination</em> - this <strong><em>should</em></strong> hurt the loss since whatever we predict would be somewhat nonsensical. To counter the effect of cross-contamination, the GPT-3 authors chose to simply add an <code>end-of-document</code> token embedding between packed sequences which seems to work fine.</p>
-<p>Masked Language Modeling approaches like RoBERTa have different issues when it comes to cross-contamination. Sequences are sampled from documents and differentiated by the <code>end-of-document</code>, but it appears that sampling sequences from different documents hurts the loss when compared to sequences from the same document. Sampling from the same document is often times difficult or impossible, so the authors take the loss.</p>
+<div class="no-row-height column-margin column-container"><p><sup>2</sup>&nbsp;<a href="https://arxiv.org/abs/1907.11692">RoBERTa: A Robustly Optimized BERT Pretraining Approach</a></p><p><sup>3</sup>&nbsp;<a href="https://arxiv.org/abs/2005.14165">Language Models are Few-Shot Learners</a></p><p><sup>4</sup>&nbsp;<a href="https://arxiv.org/abs/1910.10683">Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer</a></p><p><sup>5</sup>&nbsp;<a href="https://arxiv.org/abs/2107.02027">Efficient Sequence Packing without Cross-contamination</a></p><p><sup>6</sup>&nbsp;<a href="https://arxiv.org/abs/2107.02027">Efficient Sequence Packing without Cross-contamination</a></p></div><p>Some approaches use the packing described above naively and add an <code>end-of-document</code> token after the sequence is done to let the model figure out the difference between samples. This <em>does</em> seem to hurt performance due to cross-contamination mentioned before, but it might not have as big of an impact at scale<a href="#fn6" class="footnote-ref" id="fnref6" role="doc-noteref"><sup>6</sup></a>.</p>
 </section>
-<section id="packing-and-masking" class="level2 page-columns page-full">
-<h2 class="anchored" data-anchor-id="packing-and-masking">Packing and Masking</h2>
-<p>As mentioned, we can simply add the <code>end-of-document</code> token to differentiate sequences packed, but there is a better alternative that involves masking. Discussed in more detail in Krell et al.<a href="#fn5" class="footnote-ref" id="fnref5" role="doc-noteref"><sup>5</sup></a>, we can sum it up in two points.</p>
-<div class="no-row-height column-margin column-container"><div id="fn5"><p><sup>5</sup>&nbsp;<a href="https://arxiv.org/abs/2107.02027">Efficient Sequence Packing without Cross-contamination</a></p></div></div><section id="change-in-positional-encoding" class="level4">
-<h4 class="anchored" data-anchor-id="change-in-positional-encoding">1. Change in Positional Encoding</h4>
-<p>Positional encodings/embeddings should be adjusted to account for packed sequences. the extra sequences that are packed should start at an appropriate positional embedding, not just following the previous sequences. If we have a positional encoder based on the token index <span class="math inline">\(\text{PE}(i)\)</span>, the following figure shows how to reset the index:</p>
+<section id="dealing-with-cross-contamination" class="level2">
+<h2 class="anchored" data-anchor-id="dealing-with-cross-contamination">Dealing with Cross Contamination</h2>
+<p>To prevent cross-contamination when packing sequences, it is crucial to update both the positional information and the attention masks, not just concatenating the sequences. This ensures that the attention mechanism is still valid.</p>
+<section id="update-positional-information" class="level3">
+<h3 class="anchored" data-anchor-id="update-positional-information">Update Positional Information</h3>
+<p>When using absolute positional encodings (or ALiBi, or absolute encodings), we need to reset the positional encoding index at the start of each new sample within the packed sequence. This reset ensures that each sequence retains its positional context, which is essential for the model’s accuracy.</p>
 <div class="quarto-figure quarto-figure-center">
 <figure class="figure">
-<p><img src="pack_positional_encoding.svg" class="img-fluid figure-img"></p>
-<figcaption>Packed Positional Embedding</figcaption>
+<p><img src="packed_positional_encoding.png" class="img-fluid figure-img"></p>
+<figcaption>Packed positional encodings.</figcaption>
 </figure>
 </div>
+<p>For other positional encoding methods, such as RoPE, similar adjustments can be made. For RoPE, this involves resetting the rotation angles.</p>
 </section>
-<section id="change-in-self-attention-mask" class="level4 page-columns page-full">
-<h4 class="anchored" data-anchor-id="change-in-self-attention-mask">2. Change in Self-Attention Mask</h4>
-<p>Masking in self-attention needs to ensure that one sequence cannot attend to another sequence. We need to <em>merge</em> autoregressive masks for the self-attention layer. Some example code:</p>
-<div id="725a2290" class="cell" data-execution_count="1">
-<div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> typing <span class="im">import</span> List</span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> create_mask(sequence_lengths: List[<span class="bu">int</span>]) <span class="op">-&gt;</span> np.ndarray:</span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Create autoregressive mask. The input is assumed to be a single</span></span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="co">    sequence (list of size one) or a pack of sequences. The output is a</span></span>
-<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="co">    single autoregressive mask.</span></span>
-<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
-<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a><span class="co">        sequence_lengths: List of sequences lengths.</span></span>
-<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
-<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a><span class="co">        Autoregressive masks.</span></span>
-<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
-<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> create_autoregressive_mask(sequence_length: <span class="bu">int</span>) <span class="op">-&gt;</span> np.ndarray:</span>
-<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>        mask <span class="op">=</span> np.triu(np.ones((sequence_length, sequence_length)), k<span class="op">=</span><span class="dv">1</span>)</span>
-<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> mask</span>
-<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>    sequence, offset <span class="op">=</span> <span class="bu">sum</span>(sequence_lengths), <span class="dv">0</span></span>
-<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>    mask <span class="op">=</span> np.ones((sequence, sequence), dtype<span class="op">=</span>np.bool_)</span>
-<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> length <span class="kw">in</span> sequence_lengths:</span>
-<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>        mask[</span>
-<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>            offset:offset<span class="op">+</span>length,</span>
-<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>            offset:offset<span class="op">+</span>length,</span>
-<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a>        ] <span class="op">=</span> create_autoregressive_mask(length)</span>
-<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a>        offset <span class="op">+=</span> length</span>
-<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> mask</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
-</div>
-<p>In short: <strong>repeatedly pack sequences and merge their respective autoregressive masks until we hit the context length.</strong> A merge operation of two masks can be seen below:</p>
+<section id="update-the-attention-mask" class="level3">
+<h3 class="anchored" data-anchor-id="update-the-attention-mask">Update the Attention Mask</h3>
+<p>In self-attention mechanisms, it is necessary to ensure that one sequence cannot attend to another within the same packed context. This requires merging autoregressive masks for the self-attention layer, enforcing the restriction effectively:</p>
 <div class="quarto-figure quarto-figure-center">
 <figure class="figure">
-<p><img src="pack_mask_merge.svg" class="img-fluid figure-img"></p>
-<figcaption>Packed Mask</figcaption>
+<p><img src="packed_attention_mask.png" class="img-fluid figure-img"></p>
+<figcaption>A packed attention mask.</figcaption>
 </figure>
 </div>
-<p>With additive-masked attention, everything in the white region should be set to negative infinity to ensure that they will not be used during softmax. If properly implemented, you might notice that it makes no difference if we have <span class="math inline">\(n\)</span> sequences or <span class="math inline">\(l \leq n\)</span> packed sequences sourced from the <span class="math inline">\(n\)</span> - the gradient step should<a href="#fn6" class="footnote-ref" id="fnref6" role="doc-noteref"><sup>6</sup></a> be equal. It’s worth your time looking at figures <a href="https://arxiv.org/pdf/2107.02027.pdf#page=7">3</a> and <a href="https://arxiv.org/pdf/2107.02027.pdf#page=8">4</a> in the paper, they explain the performance of packing and the effect of ‘proper’ masking.</p>
-<div class="no-row-height column-margin column-container"><div id="fn6"><p><sup>6</sup>&nbsp;In practice, however, …</p></div></div><p>It’s not a complete free lunch though. We can normally save a single triangular matrix for self attention that is pre-computed, but now we will need an individual mask per sample. Typical flash attention implementations won’t even register a mask but will just perform masking based on the sequence index.</p>
+<p>This might be the most intrusive part to the codebase - it will require actually calculating a distinct attention mask per batch where we otherwise can simply have the standard diagonal created once for the whole batch. I imagine implementing this efficiently for ALiBi is not an enjoyable assignment.</p>
+</section>
+<section id="thats-it" class="level3">
+<h3 class="anchored" data-anchor-id="thats-it">That’s it!</h3>
+<p>Properly implementing these updates ensures that the model’s gradient step remains consistent, regardless of whether sequences are processed individually or packed.</p>
+<p>It’s worth your time looking at figures <a href="https://arxiv.org/pdf/2107.02027.pdf#page=7">3</a> and <a href="https://arxiv.org/pdf/2107.02027.pdf#page=8">4</a>, it’s from a paper that introduces the concept of cross-contamination. The paper additionally explains the performance of packing and the effect of ‘proper’ masking, it’s a great read!</p>
+<p>Another paper that discusses masked packing but during inference time that goes in depth on the effect of packing on prefilling and the time to first token is <a href="https://arxiv.org/abs/2404.09529">Prepacking</a>.</p>
 </section>
 </section>
-<section id="closing-thoughts" class="level2 page-columns page-full">
-<h2 class="anchored" data-anchor-id="closing-thoughts">Closing Thoughts</h2>
-<p>Packing increases the effective batch size, allowing us to forward more samples (= more throughput!) through the model and converge quicker. To maximize the performance when using packing:</p>
-<ol type="1">
-<li>Mask correctly for positional encoding</li>
-<li>Mask correctly for self-attention</li>
-</ol>
-<p>In practice we see both the ‘masked’ packing and packing using the <code>end-of-document</code> approaches. In theory the <code>end-of-document</code> token can communicate itself to all other tokens in the residual stream.</p>
-<p>It’s interesting to see that GPT-3 did not use masked packing. Perhaps the loss increase by not masking properly is not as bad or completely absent in large scale training? It is also possible that GPT4 <em>is</em> trained using masked packing. Does Gemini/PaLM use masked packing? If they use t5x it seems so<a href="#fn7" class="footnote-ref" id="fnref7" role="doc-noteref"><sup>7</sup></a>, but they still use the end-of-document token<a href="#fn8" class="footnote-ref" id="fnref8" role="doc-noteref"><sup>8</sup></a>:</p>
-<div class="no-row-height column-margin column-container"><div id="fn7"><p><sup>7</sup>&nbsp;They call it <em>segmented data</em> - <a href="https://github.com/google-research/t5x/blob/df5da64315dd8ee269626f66bf60eb8f12a37124/t5x/examples/t5/network.py#L310-L317">from the T5x codebase</a>.</p></div><div id="fn8"><p><sup>8</sup>&nbsp;Page 10 of the <a href="https://arxiv.org/pdf/2204.02311.pdf#page=10">PaLM</a> paper.</p></div></div><blockquote class="blockquote">
+<section id="can-we-ignore-cross-contamination" class="level2 page-columns page-full">
+<h2 class="anchored" data-anchor-id="can-we-ignore-cross-contamination">Can we Ignore Cross Contamination?</h2>
+<p>From personal experience, there is little support for packing in public codebases, often justified by the assumption that the data is not too correlated. Interestingly, the approach in <a href="https://arxiv.org/abs/2312.17296">Structured Packing in LLM Training Improves Long Context Utilization</a> essentially ignores proper masking to <strong>benefit</strong> long-context learning.</p>
+<p>It is interesting to see that GPT-3 did not use masked packing (from the quote above). It is quite possible that these cross contamination performance issues are not present in large scale training. Ofcourse, GPT-4 might be trained by masked packing, but that is not publicly disclosed.</p>
+<p>Does Gemini/PaLM use masked packing? If they use t5x it seems so<a href="#fn7" class="footnote-ref" id="fnref7" role="doc-noteref"><sup>7</sup></a>:</p>
+<div class="no-row-height column-margin column-container"><p><sup>7</sup>&nbsp;They call it <em>segmented data</em> - <a href="https://github.com/google-research/t5x/blob/df5da64315dd8ee269626f66bf60eb8f12a37124/t5x/examples/t5/network.py#L310-L317">from the T5x codebase</a>.</p></div><blockquote class="blockquote">
 <p>A sequence length of 2048 was used for all models. Input examples are concatenated together and then split into sequences of exactly 2048 tokens, so that there are no padding tokens, but examples may be split in the middle. Input examples are differentiated from one another with a special [eod] token.</p>
 </blockquote>
-<p>A large part of packing seems to be that it is this poorly documented practice that top companies probably have a tremendous amount of in-house knowledge about.</p>
-<p>For an <em>offical</em> implementation that packs sequences see the TensorFlow tensor2tensor library<a href="#fn9" class="footnote-ref" id="fnref9" role="doc-noteref"><sup>9</sup></a>. It seems that Huggingface does not support packing<a href="#fn10" class="footnote-ref" id="fnref10" role="doc-noteref"><sup>10</sup></a> - weird!</p>
 
 
-<div class="no-row-height column-margin column-container"><div id="fn9"><p><sup>9</sup>&nbsp;<a href="https://github.com/tensorflow/tensor2tensor/blob/master/tensor2tensor/data_generators/generator_utils.py#L598">github.com/tensorflow/tensor2tensor</a></p></div><div id="fn10"><p><sup>10</sup>&nbsp;<a href="https://github.com/huggingface/transformers/issues/17726">https://github.com/huggingface/transformers/issues/17726</a> &amp; <a href="https://github.com/huggingface/transformers/issues/6661">https://github.com/huggingface/transformers/issues/6661</a></p></div></div></section>
+</section>
+</section>
 
 
 </main> <!-- /main -->
@@ -413,24 +323,6 @@ window.document.addEventListener("DOMContentLoaded", function (event) {
     // clear code selection
     e.clearSelection();
   });
-    var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
-    var mailtoRegex = new RegExp(/^mailto:/);
-      var filterRegex = new RegExp("https:\/\/lweitkamp\.github\.io\/");
-    var isInternal = (href) => {
-        return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
-    }
-    // Inspect non-navigation links and adorn them if external
- 	var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool)');
-    for (var i=0; i<links.length; i++) {
-      const link = links[i];
-      if (!isInternal(link.href)) {
-        // undo the damage that might have been done by quarto-nav.js in the case of
-        // links that we want to consider external
-        if (link.dataset.originalHref !== undefined) {
-          link.href = link.dataset.originalHref;
-        }
-      }
-    }
   function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
     const config = {
       allowHTML: true,
@@ -465,11 +357,7 @@ window.document.addEventListener("DOMContentLoaded", function (event) {
       try { href = new URL(href).hash; } catch {}
       const id = href.replace(/^#\/?/, "");
       const note = window.document.getElementById(id);
-      if (note) {
-        return note.innerHTML;
-      } else {
-        return "";
-      }
+      return note.innerHTML;
     });
   }
   const xrefs = window.document.querySelectorAll('a.quarto-xref');

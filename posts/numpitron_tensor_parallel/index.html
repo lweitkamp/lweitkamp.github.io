@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.4.549">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="author" content="Laurens Weitkamp">
+<meta name="dcterms.date" content="2024-01-25">
+
+<title>Tensor Parallelism</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+</style>
+
+
+<script src="../../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../../site_libs/quarto-nav/headroom.min.js"></script>
+<script src="../../site_libs/clipboard/clipboard.min.js"></script>
+<script src="../../site_libs/quarto-html/quarto.js"></script>
+<script src="../../site_libs/quarto-html/popper.min.js"></script>
+<script src="../../site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="../../site_libs/quarto-html/anchor.min.js"></script>
+<link href="../../site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="../../site_libs/quarto-html/quarto-syntax-highlighting.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="../../site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="../../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="../../site_libs/bootstrap/bootstrap.min.css" rel="stylesheet" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+
+  <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN") {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+<link rel="stylesheet" href="../../styles.css">
+</head>
+
+<body class="floating nav-fixed slimcontent">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top quarto-banner">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+      <div class="navbar-container container-fluid">
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll me-auto">
+  <li class="nav-item">
+    <a class="nav-link" href="../../index.html"> 
+<span class="menu-text">Home</span></a>
+  </li>  
+</ul>
+            <ul class="navbar-nav navbar-nav-scroll ms-auto">
+  <li class="nav-item compact">
+    <a class="nav-link" href="https://github.com/lweitkamp/"> <i class="bi bi-github" role="img">
+</i> 
+<span class="menu-text"></span></a>
+  </li>  
+  <li class="nav-item compact">
+    <a class="nav-link" href="https://twitter.com/laurensweitkamp"> <i class="bi bi-twitter" role="img">
+</i> 
+<span class="menu-text"></span></a>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+          <div class="quarto-navbar-tools">
+</div>
+      </div> <!-- /container-fluid -->
+    </nav>
+</header>
+<!-- content -->
+<header id="title-block-header" class="quarto-title-block default toc-left page-columns page-full">
+  <div class="quarto-title-banner page-columns page-full">
+    <div class="quarto-title column-body">
+      <h1 class="title">Tensor Parallelism</h1>
+                                <div class="quarto-categories">
+                <div class="quarto-category">numpy</div>
+                <div class="quarto-category">mpi</div>
+              </div>
+                  </div>
+  </div>
+    
+  
+  <div class="quarto-title-meta">
+
+      <div>
+      <div class="quarto-title-meta-heading">Author</div>
+      <div class="quarto-title-meta-contents">
+               <p>Laurens Weitkamp </p>
+            </div>
+    </div>
+      
+      <div>
+      <div class="quarto-title-meta-heading">Published</div>
+      <div class="quarto-title-meta-contents">
+        <p class="date">January 25, 2024</p>
+      </div>
+    </div>
+    
+      
+    </div>
+    
+  
+  </header><div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto">
+    <nav id="TOC" role="doc-toc" class="toc-active" data-toc-expanded="99">
+    <h2 id="toc-title">On this page</h2>
+   
+  <ul>
+  <li><a href="#tensor-parallel-transformer" id="toc-tensor-parallel-transformer" class="nav-link active" data-scroll-target="#tensor-parallel-transformer">Tensor Parallel Transformer</a>
+  <ul class="collapse">
+  <li><a href="#input-embedding" id="toc-input-embedding" class="nav-link" data-scroll-target="#input-embedding">Input Embedding</a></li>
+  <li><a href="#attention" id="toc-attention" class="nav-link" data-scroll-target="#attention">Attention</a></li>
+  <li><a href="#groupedmulti-query-attention" id="toc-groupedmulti-query-attention" class="nav-link" data-scroll-target="#groupedmulti-query-attention">Grouped/Multi-Query Attention</a></li>
+  <li><a href="#feed-forward-network" id="toc-feed-forward-network" class="nav-link" data-scroll-target="#feed-forward-network">Feed Forward Network</a>
+  <ul class="collapse">
+  <li><a href="#swiglu" id="toc-swiglu" class="nav-link" data-scroll-target="#swiglu">SwiGLU</a></li>
+  </ul></li>
+  <li><a href="#un-embedding-and-loss-calculation" id="toc-un-embedding-and-loss-calculation" class="nav-link" data-scroll-target="#un-embedding-and-loss-calculation">Un-Embedding and Loss Calculation</a></li>
+  <li><a href="#communication-overhead" id="toc-communication-overhead" class="nav-link" data-scroll-target="#communication-overhead">Communication Overhead</a>
+  <ul class="collapse">
+  <li><a href="#activation-checkpointing" id="toc-activation-checkpointing" class="nav-link" data-scroll-target="#activation-checkpointing">Activation Checkpointing</a></li>
+  </ul></li>
+  </ul></li>
+  <li><a href="#compatibility-with-other-forms-of-parallelization" id="toc-compatibility-with-other-forms-of-parallelization" class="nav-link" data-scroll-target="#compatibility-with-other-forms-of-parallelization">Compatibility with Other Forms of Parallelization</a>
+  <ul class="collapse">
+  <li><a href="#fully-sharded-data-parallel" id="toc-fully-sharded-data-parallel" class="nav-link" data-scroll-target="#fully-sharded-data-parallel">(Fully Sharded) Data Parallel</a></li>
+  <li><a href="#pipeline-parallel" id="toc-pipeline-parallel" class="nav-link" data-scroll-target="#pipeline-parallel">Pipeline Parallel</a></li>
+  <li><a href="#sequence-parallel" id="toc-sequence-parallel" class="nav-link" data-scroll-target="#sequence-parallel">Sequence Parallel</a></li>
+  <li><a href="#expert-parallel" id="toc-expert-parallel" class="nav-link" data-scroll-target="#expert-parallel">Expert Parallel</a></li>
+  </ul></li>
+  </ul>
+</nav>
+</nav>
+<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+    </div>
+<!-- main -->
+<main class="content quarto-banner-title-block page-columns page-full" id="quarto-document-content">
+
+
+
+
+
+<p>Tensor parallel, introduced in the Megatron-LM paper by NVidia as <em>intra-layer model-parallelism</em>, is a technique for sharding model parameters across devices to reduce memory costs. It’s typically used in training large models where a single layer cannot fit into a device by itself.</p>
+<p>This post explores tensor parallelism, based on my experience implementing it in NuMPItron, a small library for distributed transformer training using NumPy and MPI<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>. Many existing blog posts cover the basics of tensor parallelism—such as splitting linear layers on rows or columns and dividing attention heads—this post will cover that but it will focus on:</p>
+<div class="no-row-height column-margin column-container"><p><sup>1</sup>&nbsp;<a href="https://github.com/lweitkamp/numpitron">NuMPItron</a>. Since matmuls in CPUs are (very quickly) compute-bound, tensor parallelism will actually speed training up by quite a bit.</p></div><ul>
+<li><p>The embedding table and the loss function.</p></li>
+<li><p>Changes involved when using the ‘shazeer’ architecture.</p></li>
+<li><p>How tensor parallel integrates with other forms of parallel training.</p></li>
+</ul>
+<p>Tensor parallelism, like pipeline model parallelism (inter-layer), requires invasive code changes<a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a> and is as slow as the slowest device communication. Hence, it is recommended to use tensor parallelism within a single node with high-speed communication like NVLink. Typically, <span class="math inline">\(N_\text{tp} = 8\)</span>, splitting the model weights over 8 devices, is the default for <em>large</em> runs.</p>
+<div class="no-row-height column-margin column-container"><p><sup>2</sup>&nbsp;there are several frameworks supporting it. Megatron-LM is the OG. Since 2023, Microsoft DeepSpeed has support for tensor parallel models too and since 2024 Nanotron by Hugginface also supports tensor parallel training.</p></div><section id="tensor-parallel-transformer" class="level1 page-columns page-full">
+<h1>Tensor Parallel Transformer</h1>
+<p>We begin with a batch of tokens <code>BROADCAST</code> to each device. For ease of understanding we have two devices: <mark style="background: #b2f2bb!important">device 1</mark> and <mark style="background: #ffc9c9!important">device 2</mark>.</p>
+<section id="input-embedding" class="level2">
+<h2 class="anchored" data-anchor-id="input-embedding">Input Embedding</h2>
+<p>The embedding layer takes a token index, locates the corresponding row in the embedding table, and returns that <span class="math inline">\(D_\text{model}\)</span> dimensional row. In a tensor parallel model, the vocab dimension (rows) of <span class="math inline">\(N_\text{vocab}\)</span> are divided into chunks across devices.</p>
+<p>An issue arises when a device encounters a token index outside its chunk, which can be solved by masking. Each device returns a tensor of size (batch size, sequence length, <span class="math inline">\(D_\text{model}\)</span>), filling out-of-bounds tokens for its chunk with zeros. Once each device completes this step, an <code>ALLREDUCE</code> operation ensures that masked indices are properly filled across all devices.</p>
+<p>The figure below visualizes this process. If you’d rather see it implemented, refer to the <a href="https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/nn/embedding.py#L44-L67">NuMPItron</a> codebase.</p>
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="embedding_tensor_parallel.png" class="img-fluid figure-img"></p>
+<figcaption>All tokens are present on all devices. The embedding forward pass performs a masked-lookup per device and the results are <code>ALLREDUCE</code>’d.</figcaption>
+</figure>
+</div>
+<p>Are there any alternatives to this? Why wouldn’t we slice the tensor on the <span class="math inline">\(D_\text{model}\)</span> dim instead? I think this would be straightforward - each device would create a full batch size by sequence length by <span class="math inline">\(\frac{D_\text{model}}{N_\text{tp}}\)</span> tensor. It wouldn’t require masking, but it <em>would</em> require an <code>ALLGATHER</code>, which has a worse worse complexity vs <code>ALLREDUCE</code>.</p>
+<p>There are no reduction in the backward pass, but you will need to ensure that the correct indices in the embedding table are being updated by masking.</p>
+</section>
+<section id="attention" class="level2 page-columns page-full">
+<h2 class="anchored" data-anchor-id="attention">Attention</h2>
+<p>The attention layer transforms the inputs into Query, Key, and Value tensors with weights <span class="math inline">\(W_Q, W_K, W_V,\)</span> each of shape <span class="math inline">\(D_\text{model} \times n_\text{heads} \times d_\text{head}\)</span>. Each head calculates the attention weights and the attention values separately, and projects it back to a shared representation with weight matrix <span class="math inline">\(W_O\)</span> of shape <span class="math inline">\(d_\text{head} \times n_\text{heads} \times D_\text{model}\)</span>.</p>
+<p>Because computation is done separately per head, tensor parallel distributes the heads over the devices. It’s depicted somewhat simplified below<a href="#fn3" class="footnote-ref" id="fnref3" role="doc-noteref"><sup>3</sup></a>:</p>
+<div class="no-row-height column-margin column-container"><p><sup>3</sup>&nbsp;Each token has several attention heads, this is still reflected in the attention weights but picture <code>seq_len</code> outputs.</p></div><div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="attention_tensor_parallel.png" class="img-fluid figure-img"></p>
+<figcaption>Query, key, value, and output heads are created sharded over devices. Attention is calculated per head and transformed to an output value which is <code>ALLREDUCE</code>d.</figcaption>
+</figure>
+</div>
+<p>This ensures that the softmax attention weights are valid. Each device will therefore have in total <span class="math inline">\(4 \times D_\text{model} \times \frac{N_\text{heads}}{2} \times d_\text{head}\)</span> weights in memory (we assume no biases for the attention layer). An <code>ALLREDUCE</code> collects the output per device at the end of the forward pass and also at the end of the backward pass.</p>
+</section>
+<section id="groupedmulti-query-attention" class="level2 page-columns page-full">
+<h2 class="anchored" data-anchor-id="groupedmulti-query-attention">Grouped/Multi-Query Attention</h2>
+<p>Multi-query attention (MQA) is a modification to the transformer model where the key and value head size is reduced from <span class="math inline">\(N_\text{heads}\)</span> to <span class="math inline">\(1\)</span> to vastly reduce memory consumption when decoding. Grouped query attention (GQA) was introduced more recently as an interpolation between vanilla and multi-query attention to ensure quality does not degrade too much by the reduction in total parameters.</p>
+<p>We have a bit of an issue when using MQA with <span class="math inline">\(N_\text{TP}=8\)</span>, since we can’t divide the single head to each device. A practical solution to this is to replicate the head to <span class="math inline">\(N_\text{TP}\)</span> size effectively using the same head on each device. In general you will see that GQA is used more often and it is set to 8 specifically to serve 8 devices in parallel<a href="#fn4" class="footnote-ref" id="fnref4" role="doc-noteref"><sup>4</sup></a>.</p>
+<div class="no-row-height column-margin column-container"><p><sup>4</sup>&nbsp;Trainium devices have similar issue since they come in 32 per node, they also advise to replicate the heads: <a href="https://awsdocs-neuron.readthedocs-hosted.com/en/latest/libraries/neuronx-distributed/api_guide.html#gqa-qkv-linear-module">https://awsdocs-neuron.readthedocs-hostedlcom/en/latest/libraries/neuronx-distributed/api_guide.html#gqa-qkv-linear-module</a>.</p></div></section>
+<section id="feed-forward-network" class="level2 page-columns page-full">
+<h2 class="anchored" data-anchor-id="feed-forward-network">Feed Forward Network</h2>
+<p>The feed forward net is a simple two layer multi layer perceptron with a ReLU nonlinearity in the middle: <span class="math display">\[
+\large \text{FFN}_\text{MLP} = \max(xW_1 + b_1, 0)W_2 + b_2
+\]</span> This means we have two weight matrices including biases that we need to shard across devices in some way that makes mathematical sense.</p>
+<p>Depicted below is a 2D matrix multiplication, something like <span class="math inline">\(xW\)</span>. We can shard computation along its columns (“column-parallel”) or along its rows (“row-parallel”).</p>
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="2d_matmul.png" class="img-fluid figure-img"></p>
+<figcaption>A generic matrix multiplication.</figcaption>
+</figure>
+</div>
+<p>If we do a column-parallel sharding strategy, we end up with complete sums but the results are sharded across devices, requiring an <code>ALLGATHER</code> operation.</p>
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="column_parallel.png" class="img-fluid figure-img"></p>
+<figcaption>A column-parallel matrix multiplication.</figcaption>
+</figure>
+</div>
+<p>Looking at the row-parallel strategy instead, we end up with partial sums across devices that require an <code>ALLREDUCE</code>.</p>
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="row_parallel.png" class="img-fluid figure-img"></p>
+<figcaption>A row-parallel matrix multiplication.</figcaption>
+</figure>
+</div>
+<p>Following the matrix multiplication with a ReLU or any nonlinearity, we can see that row-parallel will have some issues here, <span class="math inline">\(\text{ReLU}(-5) + \text{ReLU}(14) \neq \text{ReLU}(9)\)</span>. Performing a column-parallel strategy <strong>first</strong> ensures we can perform any nonlinearity since the values are complete already. We can follow it with a row-parallel matrix multiplication and <code>ALLREDUCE</code> the results for minimal communication overhead. An additional <code>AllREDUCE</code> is required at the end of the backward pass too.</p>
+<p>For the bias terms, we need to ensure that the column-parallel multiplication adds the bias <strong>only on a single device</strong>, and for the row-parallel multiplication we can split the bias.</p>
+<section id="swiglu" class="level3 page-columns page-full">
+<h3 class="anchored" data-anchor-id="swiglu">SwiGLU</h3>
+<p>Swish Gated Linear Units (SwiGLU) combine the Swish activation function<a href="#fn5" class="footnote-ref" id="fnref5" role="doc-noteref"><sup>5</sup></a> with a Gated Linear Unit: a component-wise product of two linear layers. The result is that we have <em>three</em> weight matrices instead of two, and we omit any bias:</p>
+<div class="no-row-height column-margin column-container"><p><sup>5</sup>&nbsp;. <span class="math inline">\(\text{Swish}_\beta(x) = x \sigma (\beta x)\)</span> where <span class="math inline">\(\sigma(x)\)</span> is the sigmoid activation function.</p></div><p><span class="math display">\[
+\large \text{FFN}_\text{SwiGLU} = (\text{Swish}_\beta(x W_1) \otimes xV) W_2
+\]</span></p>
+<p>Implementations tend to try and ensure that the SwiGLU does not lose any parameters when compared to the vanilla MLP<a href="#fn6" class="footnote-ref" id="fnref6" role="doc-noteref"><sup>6</sup></a>, but otherwise a tensor parallel strategy is pretty straightforward: <span class="math inline">\(W_1\)</span> and <span class="math inline">\(V\)</span> are column-parallel, and <span class="math inline">\(W_2\)</span> is row-parallel. Therefore, it also has the same communication overhead.</p>
+<div class="no-row-height column-margin column-container"><p><sup>6</sup>&nbsp;See <a href="https://arxiv.org/abs/2401.14489">The Case for Co-Designing Model Architectures with Hardware</a>. SwiGLU recommends <span class="math inline">\(\frac{8}{3}d_\text{head}\)</span> instead of the MLPs <span class="math inline">\(4 \cdot D_\text{model}\)</span>, but this default is sub-optimal.</p></div></section>
+</section>
+<section id="un-embedding-and-loss-calculation" class="level2 page-columns page-full">
+<h2 class="anchored" data-anchor-id="un-embedding-and-loss-calculation">Un-Embedding and Loss Calculation</h2>
+<p>Since Megatron-LM assumes tied-embeddings, we un-embed with the same sharded matrix as we embed, which means the output logits will be split into <span class="math inline">\(N_\text{TP}\)</span> chunks. There are no reductions for the un-embedding layer in the forward pass, but you will need to <code>ALLREDUCE</code> the gradients at the end of the backward pass.</p>
+<p>Unlike other layers, which only required a smart initialization upfront (dividing head dimensions, rows, or columns by the number of devices) and some all-reduce operations afterward, the loss calculation is more complex. After un-embedding, each token has a set of logit predictions of <span class="math inline">\(N_\text{vocab}\)</span> length.</p>
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="logits.png" class="img-fluid figure-img"></p>
+<figcaption>Logit activation magnitude per token. logits are sharded over devices along the vocab dimension.</figcaption>
+</figure>
+</div>
+<p>Our goal is to compute the softmax cross-entropy loss function<a href="#fn7" class="footnote-ref" id="fnref7" role="doc-noteref"><sup>7</sup></a>:</p>
+<div class="no-row-height column-margin column-container"><p><sup>7</sup>&nbsp;See the <a href="https://d2l.ai/chapter_linear-classification/softmax-regression-concise.html#softmax-revisited">Dive into Deep Learning</a> page for a more precise definition.</p></div><p><span class="math display">\[
+\large \text{loss} = - \log (\text{logit}_\text{true label}) + \log(\sum \exp(\text{all logits}))
+\]</span></p>
+<p>assuming the maximum value has already been subtracted for numerical stability. The first step is to calculate the max logit value per token per device using an <code>ALLREDUCE</code>. This is a relatively cheap operation requiring communication of only <span class="math inline">\(N_\text{batch} \times N_\text{ctx}\)</span> values.</p>
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="loss_fn_allreduce.png" class="img-fluid figure-img"></p>
+<figcaption>There are three reductions in the loss calculation. The first is an <code>ALLREDUCE</code>-max logit value for a stable loss calculation. The second is a masked <code>ALLREDUCE</code> such that each device has the labeled logit activation. The third and last <code>ALLREDUCE</code> ensures the log-sum-exp value is the same on all devices.</figcaption>
+</figure>
+</div>
+<p>Next, we communicate the logit of the true label to all devices. This is done by checking if the label index is within the current device’s chunk and masking it if it is not. An <code>ALLREDUCE</code> fills any masked locations, ensuring each device has the logit of the true label. The final communication step is the sum calculation: exponentiate the original logits per device, sum them, and perform the last <code>ALLREDUCE</code> of the day.</p>
+<p>All in all, that’s a lot of reductions happening. Notably, however, is the fact that each of the reductions only communicates <span class="math inline">\(N_\text{batch} \times N_\text{ctx}\)</span> values. I guess it wasn’t worth going into detail about it in the Megatron-LM paper.</p>
+<p>There are ways to reduce computational overhead by calculating the softmax required for the backward pass (we essentially have everything ready after communicating the log-sum-exp values) and even looking into fused cross-entropy<a href="#fn8" class="footnote-ref" id="fnref8" role="doc-noteref"><sup>8</sup></a>, but that is basically it.</p>
+<div class="no-row-height column-margin column-container"><p><sup>8</sup>&nbsp;<a href="https://github.com/mgmalek/efficient_cross_entropy">https://github.com/mgmalek/efficient_cross_entropy</a>.</p></div></section>
+<section id="communication-overhead" class="level2 page-columns page-full">
+<h2 class="anchored" data-anchor-id="communication-overhead">Communication Overhead</h2>
+<p>The table below gives us the forward and backward pass communications required across devices for the Megatron-LM style tensor parallel transformer.</p>
+<table class="table">
+<colgroup>
+<col style="width: 39%">
+<col style="width: 29%">
+<col style="width: 31%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Layer</th>
+<th>Forward Pass</th>
+<th>Backward Pass</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Input Embedding</td>
+<td><span class="math inline">\(N_\text{batch} \times N_\text{ctx} \times D_\text{model}\)</span></td>
+<td>N/A</td>
+</tr>
+<tr class="even">
+<td>Attention</td>
+<td><span class="math inline">\(N_\text{batch} \times N_\text{ctx} \times D_\text{model}\)</span></td>
+<td><span class="math inline">\(N_\text{batch} \times N_\text{ctx} \times D_\text{model}\)</span></td>
+</tr>
+<tr class="odd">
+<td>MLP</td>
+<td><span class="math inline">\(N_\text{batch} \times N_\text{ctx} \times D_\text{model}\)</span></td>
+<td><span class="math inline">\(N_\text{batch} \times N_\text{ctx} \times D_\text{model}\)</span></td>
+</tr>
+<tr class="even">
+<td>Output Embedding</td>
+<td>N/A</td>
+<td><span class="math inline">\(N_\text{batch} \times N_\text{ctx} \times D_\text{model}\)</span></td>
+</tr>
+<tr class="odd">
+<td>Cross-Entropy</td>
+<td><span class="math inline">\(3 \cdot N_\text{batch} \times N_\text{ctx}\)</span></td>
+<td>N/A</td>
+</tr>
+</tbody>
+</table>
+<p>We need to keep in mind that the Attention and MLP layers are most important here, since these will happen at every layer. It does seem to scale quite bad in terms of sequence length, something I might cover in an upcoming post when I add sequence parallel to NuMPItron.</p>
+<section id="activation-checkpointing" class="level3 page-columns page-full">
+<h3 class="anchored" data-anchor-id="activation-checkpointing">Activation Checkpointing</h3>
+<p>Hidden activations required for backward-pass calculations can quickly fill up device memory, and the larger the model size the faster memory fills up. To alleviate this somewhat, you can use <em>activation checkpointing</em>, which re-calculates the hidden activations during the backward pass by storing only the layer input instead.</p>
+<p>This is a very useful technique to use, but when used naively it requires two additional <code>ALLREDUCE</code> operations when re-calculating the forward pass activations for the backward pass. The Megatron-LM authors fixed this in favor of a more selective recomputation in the sequence parallel paper<a href="#fn9" class="footnote-ref" id="fnref9" role="doc-noteref"><sup>9</sup></a>.</p>
+<div class="no-row-height column-margin column-container"><p><sup>9</sup>&nbsp;See <a href="https://arxiv.org/abs/2205.05198">Reducing Activation Recomputation in Large Transformer Models</a>.</p></div></section>
+</section>
+</section>
+<section id="compatibility-with-other-forms-of-parallelization" class="level1 page-columns page-full">
+<h1>Compatibility with Other Forms of Parallelization</h1>
+<p>We will discuss the most relevant forms: (fully sharded) data parallel, pipeline parallel, sequence parallel, and the more recent expert parallel. When in doubt, always check Stas Bekman’s cheat sheet: <a href="https://github.com/stas00/ml-engineering/tree/master/training/model-parallelism#which-strategy-to-use-when">Which Strategy To Use When</a>. Here you can also see that in general the 3D parallel setup (data + pipeline + tensor) is a popular and efficient approach.</p>
+<section id="fully-sharded-data-parallel" class="level2">
+<h2 class="anchored" data-anchor-id="fully-sharded-data-parallel">(Fully Sharded) Data Parallel</h2>
+<p>Basic distributed data parallelism has no compatibility issues with tensor parallelism and is highly complementary. With four devices and <span class="math inline">\(N_\text{TP}=2\)</span>, we shard the parameters across two devices each, where each pair of devices gets half the global batch size. If you have both tensor parallelism and data parallelism in a multi-node setup, you typically set <span class="math inline">\(N_\text{TP}\)</span> for intra-node and use data parallelism for inter-node.</p>
+<p>Fully Sharded Data Parallel (FSDP) is an implementation of ZeRO-3, which is beyond the scope of this blog post. FSDP is also compatible with tensor parallelism. As an analogy, tensor parallel is to sharding compute as FSDP is to sharding parameters. This highly optimized method ensures minimal memory requirements per device, with the model, optimizer, and hidden activations sharded across as many devices as possible.</p>
+</section>
+<section id="pipeline-parallel" class="level2 page-columns page-full">
+<h2 class="anchored" data-anchor-id="pipeline-parallel">Pipeline Parallel</h2>
+<p>Pipeline parallelism aims to distribute layers across devices. Like data parallel, pipeline parallel is often used in conjunction with tensor parallel delivering what Microsoft called ‘3D-parallel’ training, allowing for very large scale model training.</p>
+<p>Pipeline is not required though, OPT-175B was trained using only tensor-parallel and FSDP on 992 GPUs<a href="#fn10" class="footnote-ref" id="fnref10" role="doc-noteref"><sup>10</sup></a>. So why would we want to add pipeline to the mix?</p>
+<div class="no-row-height column-margin column-container"><p><sup>10</sup>&nbsp;How did this work? From the log-book, we have 8-way tensor parallel on 992 GPUs, leaving 124 groups of 8 GPUs for data parallel training. We also have a local batch size of 8 for each group and a context length of 2048. Multiply 128 group by 8 local batch size by 2048 context length and we have 2_031_616, roughly 2M.</p></div></section>
+<section id="sequence-parallel" class="level2">
+<h2 class="anchored" data-anchor-id="sequence-parallel">Sequence Parallel</h2>
+</section>
+<section id="expert-parallel" class="level2">
+<h2 class="anchored" data-anchor-id="expert-parallel">Expert Parallel</h2>
+<p>In mixture-of-experts (MoE) approaches, the size of the MLP layer is reduced, and multiple ‘expert’ MLPs are active per transformer layer. Experts are divided across available devices, with each token routed to a subset of the experts to induce sparsity in training. This results in a more powerful model with more parameters for the same compute budget.</p>
+<p>Combining tensor parallelism and expert parallelism is possible, but it might not be practical for the MLP ‘expert’ layer, as these layers are already reduced in size and distributed. However, it would still be efficient to apply tensor parallelism to the embedding table and the attention layer.</p>
+
+
+</section>
+</section>
+
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+window.document.addEventListener("DOMContentLoaded", function (event) {
+  const toggleBodyColorMode = (bsSheetEl) => {
+    const mode = bsSheetEl.getAttribute("data-mode");
+    const bodyEl = window.document.querySelector("body");
+    if (mode === "dark") {
+      bodyEl.classList.add("quarto-dark");
+      bodyEl.classList.remove("quarto-light");
+    } else {
+      bodyEl.classList.add("quarto-light");
+      bodyEl.classList.remove("quarto-dark");
+    }
+  }
+  const toggleBodyColorPrimary = () => {
+    const bsSheetEl = window.document.querySelector("link#quarto-bootstrap");
+    if (bsSheetEl) {
+      toggleBodyColorMode(bsSheetEl);
+    }
+  }
+  toggleBodyColorPrimary();  
+  const icon = "";
+  const anchorJS = new window.AnchorJS();
+  anchorJS.options = {
+    placement: 'right',
+    icon: icon
+  };
+  anchorJS.add('.anchored');
+  const isCodeAnnotation = (el) => {
+    for (const clz of el.classList) {
+      if (clz.startsWith('code-annotation-')) {                     
+        return true;
+      }
+    }
+    return false;
+  }
+  const clipboard = new window.ClipboardJS('.code-copy-button', {
+    text: function(trigger) {
+      const codeEl = trigger.previousElementSibling.cloneNode(true);
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+  });
+  clipboard.on('success', function(e) {
+    // button target
+    const button = e.trigger;
+    // don't keep focus
+    button.blur();
+    // flash "checked"
+    button.classList.add('code-copy-button-checked');
+    var currentTitle = button.getAttribute("title");
+    button.setAttribute("title", "Copied!");
+    let tooltip;
+    if (window.bootstrap) {
+      button.setAttribute("data-bs-toggle", "tooltip");
+      button.setAttribute("data-bs-placement", "left");
+      button.setAttribute("data-bs-title", "Copied!");
+      tooltip = new bootstrap.Tooltip(button, 
+        { trigger: "manual", 
+          customClass: "code-copy-button-tooltip",
+          offset: [0, -8]});
+      tooltip.show();    
+    }
+    setTimeout(function() {
+      if (tooltip) {
+        tooltip.hide();
+        button.removeAttribute("data-bs-title");
+        button.removeAttribute("data-bs-toggle");
+        button.removeAttribute("data-bs-placement");
+      }
+      button.setAttribute("title", currentTitle);
+      button.classList.remove('code-copy-button-checked');
+    }, 1000);
+    // clear code selection
+    e.clearSelection();
+  });
+  function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+    const config = {
+      allowHTML: true,
+      maxWidth: 500,
+      delay: 100,
+      arrow: false,
+      appendTo: function(el) {
+          return el.parentElement;
+      },
+      interactive: true,
+      interactiveBorder: 10,
+      theme: 'quarto',
+      placement: 'bottom-start',
+    };
+    if (contentFn) {
+      config.content = contentFn;
+    }
+    if (onTriggerFn) {
+      config.onTrigger = onTriggerFn;
+    }
+    if (onUntriggerFn) {
+      config.onUntrigger = onUntriggerFn;
+    }
+    window.tippy(el, config); 
+  }
+  const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+  for (var i=0; i<noterefs.length; i++) {
+    const ref = noterefs[i];
+    tippyHover(ref, function() {
+      // use id or data attribute instead here
+      let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+      try { href = new URL(href).hash; } catch {}
+      const id = href.replace(/^#\/?/, "");
+      const note = window.document.getElementById(id);
+      return note.innerHTML;
+    });
+  }
+  const xrefs = window.document.querySelectorAll('a.quarto-xref');
+  const processXRef = (id, note) => {
+    // Strip column container classes
+    const stripColumnClz = (el) => {
+      el.classList.remove("page-full", "page-columns");
+      if (el.children) {
+        for (const child of el.children) {
+          stripColumnClz(child);
+        }
+      }
+    }
+    stripColumnClz(note)
+    if (id === null || id.startsWith('sec-')) {
+      // Special case sections, only their first couple elements
+      const container = document.createElement("div");
+      if (note.children && note.children.length > 2) {
+        container.appendChild(note.children[0].cloneNode(true));
+        for (let i = 1; i < note.children.length; i++) {
+          const child = note.children[i];
+          if (child.tagName === "P" && child.innerText === "") {
+            continue;
+          } else {
+            container.appendChild(child.cloneNode(true));
+            break;
+          }
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(container);
+        }
+        return container.innerHTML
+      } else {
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        return note.innerHTML;
+      }
+    } else {
+      // Remove any anchor links if they are present
+      const anchorLink = note.querySelector('a.anchorjs-link');
+      if (anchorLink) {
+        anchorLink.remove();
+      }
+      if (window.Quarto?.typesetMath) {
+        window.Quarto.typesetMath(note);
+      }
+      // TODO in 1.5, we should make sure this works without a callout special case
+      if (note.classList.contains("callout")) {
+        return note.outerHTML;
+      } else {
+        return note.innerHTML;
+      }
+    }
+  }
+  for (var i=0; i<xrefs.length; i++) {
+    const xref = xrefs[i];
+    tippyHover(xref, undefined, function(instance) {
+      instance.disable();
+      let url = xref.getAttribute('href');
+      let hash = undefined; 
+      if (url.startsWith('#')) {
+        hash = url;
+      } else {
+        try { hash = new URL(url).hash; } catch {}
+      }
+      if (hash) {
+        const id = hash.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note !== null) {
+          try {
+            const html = processXRef(id, note.cloneNode(true));
+            instance.setContent(html);
+          } finally {
+            instance.enable();
+            instance.show();
+          }
+        } else {
+          // See if we can fetch this
+          fetch(url.split('#')[0])
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.getElementById(id);
+            if (note !== null) {
+              const html = processXRef(id, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      } else {
+        // See if we can fetch a full url (with no hash to target)
+        // This is a special case and we should probably do some content thinning / targeting
+        fetch(url)
+        .then(res => res.text())
+        .then(html => {
+          const parser = new DOMParser();
+          const htmlDoc = parser.parseFromString(html, "text/html");
+          const note = htmlDoc.querySelector('main.content');
+          if (note !== null) {
+            // This should only happen for chapter cross references
+            // (since there is no id in the URL)
+            // remove the first header
+            if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+              note.children[0].remove();
+            }
+            const html = processXRef(null, note);
+            instance.setContent(html);
+          } 
+        }).finally(() => {
+          instance.enable();
+          instance.show();
+        });
+      }
+    }, function(instance) {
+    });
+  }
+      let selectedAnnoteEl;
+      const selectorForAnnotation = ( cell, annotation) => {
+        let cellAttr = 'data-code-cell="' + cell + '"';
+        let lineAttr = 'data-code-annotation="' +  annotation + '"';
+        const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+        return selector;
+      }
+      const selectCodeLines = (annoteEl) => {
+        const doc = window.document;
+        const targetCell = annoteEl.getAttribute("data-target-cell");
+        const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+        const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+        const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+        const lineIds = lines.map((line) => {
+          return targetCell + "-" + line;
+        })
+        let top = null;
+        let height = null;
+        let parent = null;
+        if (lineIds.length > 0) {
+            //compute the position of the single el (top and bottom and make a div)
+            const el = window.document.getElementById(lineIds[0]);
+            top = el.offsetTop;
+            height = el.offsetHeight;
+            parent = el.parentElement.parentElement;
+          if (lineIds.length > 1) {
+            const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+            const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+            height = bottom - top;
+          }
+          if (top !== null && height !== null && parent !== null) {
+            // cook up a div (if necessary) and position it 
+            let div = window.document.getElementById("code-annotation-line-highlight");
+            if (div === null) {
+              div = window.document.createElement("div");
+              div.setAttribute("id", "code-annotation-line-highlight");
+              div.style.position = 'absolute';
+              parent.appendChild(div);
+            }
+            div.style.top = top - 2 + "px";
+            div.style.height = height + 4 + "px";
+            div.style.left = 0;
+            let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+            if (gutterDiv === null) {
+              gutterDiv = window.document.createElement("div");
+              gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+              gutterDiv.style.position = 'absolute';
+              const codeCell = window.document.getElementById(targetCell);
+              const gutter = codeCell.querySelector('.code-annotation-gutter');
+              gutter.appendChild(gutterDiv);
+            }
+            gutterDiv.style.top = top - 2 + "px";
+            gutterDiv.style.height = height + 4 + "px";
+          }
+          selectedAnnoteEl = annoteEl;
+        }
+      };
+      const unselectCodeLines = () => {
+        const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+        elementsIds.forEach((elId) => {
+          const div = window.document.getElementById(elId);
+          if (div) {
+            div.remove();
+          }
+        });
+        selectedAnnoteEl = undefined;
+      };
+        // Handle positioning of the toggle
+    window.addEventListener(
+      "resize",
+      throttle(() => {
+        elRect = undefined;
+        if (selectedAnnoteEl) {
+          selectCodeLines(selectedAnnoteEl);
+        }
+      }, 10)
+    );
+    function throttle(fn, ms) {
+    let throttle = false;
+    let timer;
+      return (...args) => {
+        if(!throttle) { // first call gets through
+            fn.apply(this, args);
+            throttle = true;
+        } else { // all the others get throttled
+            if(timer) clearTimeout(timer); // cancel #2
+            timer = setTimeout(() => {
+              fn.apply(this, args);
+              timer = throttle = false;
+            }, ms);
+        }
+      };
+    }
+      // Attach click handler to the DT
+      const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+      for (const annoteDlNode of annoteDls) {
+        annoteDlNode.addEventListener('click', (event) => {
+          const clickedEl = event.target;
+          if (clickedEl !== selectedAnnoteEl) {
+            unselectCodeLines();
+            const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+            if (activeEl) {
+              activeEl.classList.remove('code-annotation-active');
+            }
+            selectCodeLines(clickedEl);
+            clickedEl.classList.add('code-annotation-active');
+          } else {
+            // Unselect the line
+            unselectCodeLines();
+            clickedEl.classList.remove('code-annotation-active');
+          }
+        });
+      }
+  const findCites = (el) => {
+    const parentEl = el.parentElement;
+    if (parentEl) {
+      const cites = parentEl.dataset.cites;
+      if (cites) {
+        return {
+          el,
+          cites: cites.split(' ')
+        };
+      } else {
+        return findCites(el.parentElement)
+      }
+    } else {
+      return undefined;
+    }
+  };
+  var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+  for (var i=0; i<bibliorefs.length; i++) {
+    const ref = bibliorefs[i];
+    const citeInfo = findCites(ref);
+    if (citeInfo) {
+      tippyHover(citeInfo.el, function() {
+        var popup = window.document.createElement('div');
+        citeInfo.cites.forEach(function(cite) {
+          var citeDiv = window.document.createElement('div');
+          citeDiv.classList.add('hanging-indent');
+          citeDiv.classList.add('csl-entry');
+          var biblioDiv = window.document.getElementById('ref-' + cite);
+          if (biblioDiv) {
+            citeDiv.innerHTML = biblioDiv.innerHTML;
+          }
+          popup.appendChild(citeDiv);
+        });
+        return popup.innerHTML;
+      });
+    }
+  }
+});
+</script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>
