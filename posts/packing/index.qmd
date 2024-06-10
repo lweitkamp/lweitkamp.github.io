@@ -13,17 +13,21 @@ reference-location: margin
 citation-location: margin
 ---
 
-The context length of transformer models is rapidly increasing with each new generation of frontier models. Google's latest Gemini 1.5 can hold up to 1 million tokens, which amounts to 1 hour of video or 700,000 words. This is driven by innovations in hardware and smarter algorithms tailored to the specific demands of long-context training[^1].
+The context length of transformer models is rapidly increasing with each new generation of frontier models. For instance, Google's latest Gemini 1.5 model can process up to 1 million tokens, equivalent to 1 hour of video or approximately 700,000 words. This increase is driven by advancements in hardware and the development of more efficient algorithms tailored to the specific demands of long-context training[^1].
 
-[^1]: There is an orthogonal direction here in which we train with a short context, but inference on long context. Packing can still apply during inference.
+[^1]: An orthogonal approach involves training with a short context but performing inference on a long context. Packing techniques can still be beneficial during inference.
 
-Long context brings several challenges to the mix: we need to figure out data that is inherently long context (books, podcasts, videos) but we also need to ensure we treat smaller context data efficiently. If we simply concatenate these documents and throw them in an autoregressive transformer, we are *cross-contamination* sequences: predicting a sequence `S2` from an unrelated sequence `S1` can be almost impossible given a large difference in subject matter.
+Long contexts introduce several challenges: identifying data that inherently requires long contexts (such as books, podcasts, and videos) and efficiently handling smaller context data. Simply concatenating these documents and feeding them into an autoregressive transformer can lead to *cross-contamination* of sequences. For instance, predicting a sequence `S2` from an unrelated sequence `S1` becomes nearly impossible if there is a significant difference in their subject matter.
 
-The same holds for inference. If we are dynamically batching tokens from different users, we could have an efficiency gain if we put shorter conversations in the same 'batch'. The solution to both issues is a technique called *packing*.
+
+The same issue arises during inference. If we dynamically batch tokens from different users, efficiency can be improved by grouping shorter conversations in the same batch. The solution to both of these issues is a technique called *packing*.
 
 # Packing
+Packing sequences is a technique used in transformer models during training and inference to optimize the use of context length and reduce padding.
 
-As an example, take a transformer with context length `ctx` and two samples `S1` and `S2` of lengths `n`, `m` respectively with `n + m <= ctx`. If we take these as separate sequences we are left with padding `ctx - n + ctx - m` tokens. If we pack them together, we reduce the padding to only `ctx - n - m`! The figure below depicts two sequences and how we pack them.
+Consider a transformer model with a context length denoted as `ctx`. Let's take two sequences, `S1` and `S2`, with lengths `n` and `m` respectively, where `n + m <= ctx`. If we treat these sequences separately, the total padding required would be `ctx - n + ctx - m` tokens. However, by packing these sequences together into a single context, we can significantly reduce the padding to only `ctx - n - m` tokens.
+
+The figure below illustrates the concept of packing two sequences.
 
 ![Two sequences "packed".](packed_sequences.png)
 
@@ -48,34 +52,35 @@ Some approaches use the packing described above naively and add an `end-of-docum
 [^5]: [Efficient Sequence Packing without Cross-contamination](https://arxiv.org/abs/2107.02027)
 
 ## Dealing with Cross Contamination
-
-If you want to ensure no cross-contamination is possible, we will need to update the positional information and the attention masks in addition to simply concatenating the sequences.
+To prevent cross-contamination when packing sequences, it is crucial to update both the positional information and the attention masks, not just concatenating the sequences. This ensures that the attention mechanism is still valid.
 
 ### Update Positional Information
+When using absolute positional encodings (or ALiBi, or absolute encodings), we need to reset the positional encoding index at the start of each new sample within the packed sequence. This reset ensures that each sequence retains its positional context, which is essential for the model's accuracy.
 
-If we are using some absolute positional encodings (or ALiBi) we will need to 'reset' the positional encoding index starting at each new sample in the pack:
 
 ![Packed positional encodings.](packed_positional_encoding.png)
 
-Similar solutions are possible for RoPE (reset the rotation angles) and absolute positional encodings (reset the starting index).
+For other positional encoding methods, such as RoPE, similar adjustments can be made. For RoPE, this involves resetting the rotation angles.
 
 ### Update the Attention Mask
-Masking in self-attention needs to ensure that one sequence cannot attend to another sequence.
-We need to *merge* autoregressive masks for the self-attention layer to ensure this restriction:
+In self-attention mechanisms, it is necessary to ensure that one sequence cannot attend to another within the same packed context. This requires merging autoregressive masks for the self-attention layer, enforcing the restriction effectively:
 
 ![A packed attention mask.](packed_attention_mask.png)
 
-This might be the most intrusive part to the codebase - it will require actually calculating a distinct attention mask per batch where we otherwise can simply have the standard lower diagonal created once for the whole batch. I imagine implementing this efficiently for ALiBi is not an enjoyable assignment.
+This might be the most intrusive part to the codebase - it will require actually calculating a distinct attention mask per batch where we otherwise can simply have the standard diagonal created once for the whole batch. I imagine implementing this efficiently for ALiBi is not an enjoyable assignment.
 
 ### That's it!
-If properly implemented, you might notice that it makes no difference if we have `N` sequences or `L < N` packed sequences sourced from the `N` - the gradient step should be equal. It's worth your time looking at figures [3](https://arxiv.org/pdf/2107.02027.pdf#page=7) and [4](https://arxiv.org/pdf/2107.02027.pdf#page=8), it's from a paper that introduces the concept of cross-contamination. The paper additionally explains the performance of packing and the effect of 'proper' masking, it's a great read!
+Properly implementing these updates ensures that the model's gradient step remains consistent, regardless of whether sequences are processed individually or packed.
+
+It's worth your time looking at figures [3](https://arxiv.org/pdf/2107.02027.pdf#page=7) and [4](https://arxiv.org/pdf/2107.02027.pdf#page=8), it's from a paper that introduces the concept of cross-contamination. The paper additionally explains the performance of packing and the effect of 'proper' masking, it's a great read!
 
 Another paper that discusses masked packing but during inference time that goes in depth on the effect of packing on prefilling and the time to first token is [Prepacking](https://arxiv.org/abs/2404.09529).
 
 ## Can we Ignore Cross Contamination?
-From personal experience, there is little support in public codebases for packing, and this is often justified by mentioning the data is probably not *too* correlated to begin with. In fact, in [Structured Packing in LLM Training Improves Long Context Utilization](https://arxiv.org/abs/2312.17296), the approach essentially ignores the proper masking to **benefit** long context learning!
+From personal experience, there is little support for packing in public codebases, often justified by the assumption that the data is not too correlated. Interestingly, the approach in [Structured Packing in LLM Training Improves Long Context Utilization](https://arxiv.org/abs/2312.17296) essentially ignores proper masking to **benefit** long-context learning.
 
-It is interesting to see that GPT-3 did not use masked packing (from the quote above). It is quite possible that these cross contamination performance issues are not present in large scale training. Ofcourse, GPT-4 might be trained by masked packing, but we will never know.
+
+It is interesting to see that GPT-3 did not use masked packing (from the quote above). It is quite possible that these cross contamination performance issues are not present in large scale training. Ofcourse, GPT-4 might be trained by masked packing, but that is not publicly disclosed.
 
 Does Gemini/PaLM use masked packing? If they use t5x it seems so[^8]:
 
