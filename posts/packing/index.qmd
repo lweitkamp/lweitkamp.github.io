@@ -1,9 +1,8 @@
 ---
-title: "Packing"
+title: "Packing Data for efficient Training and Inference"
 author: "Laurens Weitkamp"
-date: "2023-05-01"
+date: last-modified
 draft: false
-categories: [transformer, trainign, packing, language modelling]
 
 format:
   html:
