@@ -1,0 +1,23 @@
+---
+title: "Open Ended Learning"
+author: "Laurens Weitkamp"
+date: last-modified
+draft: false
+
+format:
+  html:
+    toc: true
+    toc-location: left
+reference-location: margin
+citation-location: margin
+---
+
+
+::: {.callout-note title="**Definition**" icon=false}
+### From the perspective of an observer, a <mark style="color: #2f9e44!important">system</mark> is open-ended if and only if the sequence of <mark style="color: #a18072!important">artifacts</mark> it produces is both novel and learnable.
+:::
+
+![A <mark style="color: #2f9e44!important">system</mark> generating a sequence of <mark style="color: #a18072!important">artifacts</mark>. Some artifacts are conditionaly generated based on previous generations, some are not.](artefact_generating.png)
+
+
+**novel**: artifacts become increasingly unpredictable with respect to the <mark style="color: #1971c2!important">observer</mark>. There is always a less predictable artifact coming further in the future.
