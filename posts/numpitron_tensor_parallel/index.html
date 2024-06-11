@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 <meta name="author" content="Laurens Weitkamp">
-<meta name="dcterms.date" content="2024-01-25">
+<meta name="dcterms.date" content="2024-06-11">
 
 <title>Tensor Parallelism</title>
 <style>
@@ -145,7 +145,7 @@ window.Quarto = {
       <div>
       <div class="quarto-title-meta-heading">Published</div>
       <div class="quarto-title-meta-contents">
-        <p class="date">January 25, 2024</p>
+        <p class="date">June 11, 2024</p>
       </div>
     </div>
     
@@ -175,12 +175,10 @@ window.Quarto = {
   <li><a href="#activation-checkpointing" id="toc-activation-checkpointing" class="nav-link" data-scroll-target="#activation-checkpointing">Activation Checkpointing</a></li>
   </ul></li>
   </ul></li>
-  <li><a href="#compatibility-with-other-forms-of-parallelization" id="toc-compatibility-with-other-forms-of-parallelization" class="nav-link" data-scroll-target="#compatibility-with-other-forms-of-parallelization">Compatibility with Other Forms of Parallelization</a>
+  <li><a href="#d-parallel-training" id="toc-d-parallel-training" class="nav-link" data-scroll-target="#d-parallel-training">3D Parallel Training</a>
   <ul class="collapse">
-  <li><a href="#fully-sharded-data-parallel" id="toc-fully-sharded-data-parallel" class="nav-link" data-scroll-target="#fully-sharded-data-parallel">(Fully Sharded) Data Parallel</a></li>
-  <li><a href="#pipeline-parallel" id="toc-pipeline-parallel" class="nav-link" data-scroll-target="#pipeline-parallel">Pipeline Parallel</a></li>
-  <li><a href="#sequence-parallel" id="toc-sequence-parallel" class="nav-link" data-scroll-target="#sequence-parallel">Sequence Parallel</a></li>
-  <li><a href="#expert-parallel" id="toc-expert-parallel" class="nav-link" data-scroll-target="#expert-parallel">Expert Parallel</a></li>
+  <li><a href="#pipeline-and-data-parallel" id="toc-pipeline-and-data-parallel" class="nav-link" data-scroll-target="#pipeline-and-data-parallel">Pipeline and Data Parallel</a></li>
+  <li><a href="#a-visual-example" id="toc-a-visual-example" class="nav-link" data-scroll-target="#a-visual-example">A Visual Example</a></li>
   </ul></li>
   </ul>
 </nav>
@@ -197,14 +195,9 @@ window.Quarto = {
 
 
 <p>Tensor parallel, introduced in the Megatron-LM paper by NVidia as <em>intra-layer model-parallelism</em>, is a technique for sharding model parameters across devices to reduce memory costs. It’s typically used in training large models where a single layer cannot fit into a device by itself.</p>
-<p>This post explores tensor parallelism, based on my experience implementing it in NuMPItron, a small library for distributed transformer training using NumPy and MPI<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>. Many existing blog posts cover the basics of tensor parallelism—such as splitting linear layers on rows or columns and dividing attention heads—this post will cover that but it will focus on:</p>
-<div class="no-row-height column-margin column-container"><p><sup>1</sup>&nbsp;<a href="https://github.com/lweitkamp/numpitron">NuMPItron</a>. Since matmuls in CPUs are (very quickly) compute-bound, tensor parallelism will actually speed training up by quite a bit.</p></div><ul>
-<li><p>The embedding table and the loss function.</p></li>
-<li><p>Changes involved when using the ‘shazeer’ architecture.</p></li>
-<li><p>How tensor parallel integrates with other forms of parallel training.</p></li>
-</ul>
-<p>Tensor parallelism, like pipeline model parallelism (inter-layer), requires invasive code changes<a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a> and is as slow as the slowest device communication. Hence, it is recommended to use tensor parallelism within a single node with high-speed communication like NVLink. Typically, <span class="math inline">\(N_\text{tp} = 8\)</span>, splitting the model weights over 8 devices, is the default for <em>large</em> runs.</p>
-<div class="no-row-height column-margin column-container"><p><sup>2</sup>&nbsp;there are several frameworks supporting it. Megatron-LM is the OG. Since 2023, Microsoft DeepSpeed has support for tensor parallel models too and since 2024 Nanotron by Hugginface also supports tensor parallel training.</p></div><section id="tensor-parallel-transformer" class="level1 page-columns page-full">
+<p>This post explores tensor parallelism, based on my experience implementing it in NuMPItron, a small library for distributed transformer training using NumPy and MPI<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>. There are several posts that discuss the basics of tensor parallelism—such as splitting linear layers on rows or columns and dividing attention heads—but I want to go in a bit more depth and discuss also the embedding table and the loss function.</p>
+<div class="no-row-height column-margin column-container"><p><sup>1</sup>&nbsp;<a href="https://github.com/lweitkamp/numpitron">NuMPItron</a>. Since matmuls in CPUs are (very quickly) compute-bound, tensor parallelism will actually speed training up by quite a bit.</p><p><sup>2</sup>&nbsp;there are several frameworks supporting it. Megatron-LM is the OG. Since 2023, Microsoft DeepSpeed has support for tensor parallel models too and since 2024 Nanotron by Hugginface also supports tensor parallel training.</p></div><p>Tensor parallelism, like pipeline model parallelism (inter-layer), requires invasive code changes<a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a> and is as slow as the slowest device communication. Hence, it is recommended to use tensor parallelism within a single node with high-speed communication like NVLink. Typically, <span class="math inline">\(N_\text{tp} = 8\)</span>, splitting the model weights over 8 devices, is the default for <em>large</em> runs.</p>
+<section id="tensor-parallel-transformer" class="level1 page-columns page-full">
 <h1>Tensor Parallel Transformer</h1>
 <p>We begin with a batch of tokens <code>BROADCAST</code> to each device. For ease of understanding we have two devices: <mark style="background: #b2f2bb!important">device 1</mark> and <mark style="background: #ffc9c9!important">device 2</mark>.</p>
 <section id="input-embedding" class="level2">
@@ -286,7 +279,7 @@ window.Quarto = {
 </figure>
 </div>
 <p>Our goal is to compute the softmax cross-entropy loss function<a href="#fn7" class="footnote-ref" id="fnref7" role="doc-noteref"><sup>7</sup></a>:</p>
-<div class="no-row-height column-margin column-container"><p><sup>7</sup>&nbsp;See the <a href="https://d2l.ai/chapter_linear-classification/softmax-regression-concise.html#softmax-revisited">Dive into Deep Learning</a> page for a more precise definition.</p></div><p><span class="math display">\[
+<div class="no-row-height column-margin column-container"><p><sup>7</sup>&nbsp;global batch size = number of microbatches * microbatch size * <span class="math inline">\(N_\text{DP}\)</span></p></div><p><span class="math display">\[
 \large \text{loss} = - \log (\text{logit}_\text{true label}) + \log(\sum \exp(\text{all logits}))
 \]</span></p>
 <p>assuming the maximum value has already been subtracted for numerical stability. The first step is to calculate the max logit value per token per device using an <code>ALLREDUCE</code>. This is a relatively cheap operation requiring communication of only <span class="math inline">\(N_\text{batch} \times N_\text{ctx}\)</span> values.</p>
@@ -352,26 +345,123 @@ window.Quarto = {
 <div class="no-row-height column-margin column-container"><p><sup>9</sup>&nbsp;See <a href="https://arxiv.org/abs/2205.05198">Reducing Activation Recomputation in Large Transformer Models</a>.</p></div></section>
 </section>
 </section>
-<section id="compatibility-with-other-forms-of-parallelization" class="level1 page-columns page-full">
-<h1>Compatibility with Other Forms of Parallelization</h1>
-<p>We will discuss the most relevant forms: (fully sharded) data parallel, pipeline parallel, sequence parallel, and the more recent expert parallel. When in doubt, always check Stas Bekman’s cheat sheet: <a href="https://github.com/stas00/ml-engineering/tree/master/training/model-parallelism#which-strategy-to-use-when">Which Strategy To Use When</a>. Here you can also see that in general the 3D parallel setup (data + pipeline + tensor) is a popular and efficient approach.</p>
-<section id="fully-sharded-data-parallel" class="level2">
-<h2 class="anchored" data-anchor-id="fully-sharded-data-parallel">(Fully Sharded) Data Parallel</h2>
-<p>Basic distributed data parallelism has no compatibility issues with tensor parallelism and is highly complementary. With four devices and <span class="math inline">\(N_\text{TP}=2\)</span>, we shard the parameters across two devices each, where each pair of devices gets half the global batch size. If you have both tensor parallelism and data parallelism in a multi-node setup, you typically set <span class="math inline">\(N_\text{TP}\)</span> for intra-node and use data parallelism for inter-node.</p>
-<p>Fully Sharded Data Parallel (FSDP) is an implementation of ZeRO-3, which is beyond the scope of this blog post. FSDP is also compatible with tensor parallelism. As an analogy, tensor parallel is to sharding compute as FSDP is to sharding parameters. This highly optimized method ensures minimal memory requirements per device, with the model, optimizer, and hidden activations sharded across as many devices as possible.</p>
-</section>
-<section id="pipeline-parallel" class="level2 page-columns page-full">
-<h2 class="anchored" data-anchor-id="pipeline-parallel">Pipeline Parallel</h2>
-<p>Pipeline parallelism aims to distribute layers across devices. Like data parallel, pipeline parallel is often used in conjunction with tensor parallel delivering what Microsoft called ‘3D-parallel’ training, allowing for very large scale model training.</p>
-<p>Pipeline is not required though, OPT-175B was trained using only tensor-parallel and FSDP on 992 GPUs<a href="#fn10" class="footnote-ref" id="fnref10" role="doc-noteref"><sup>10</sup></a>. So why would we want to add pipeline to the mix?</p>
-<div class="no-row-height column-margin column-container"><p><sup>10</sup>&nbsp;How did this work? From the log-book, we have 8-way tensor parallel on 992 GPUs, leaving 124 groups of 8 GPUs for data parallel training. We also have a local batch size of 8 for each group and a context length of 2048. Multiply 128 group by 8 local batch size by 2048 context length and we have 2_031_616, roughly 2M.</p></div></section>
-<section id="sequence-parallel" class="level2">
-<h2 class="anchored" data-anchor-id="sequence-parallel">Sequence Parallel</h2>
-</section>
-<section id="expert-parallel" class="level2">
-<h2 class="anchored" data-anchor-id="expert-parallel">Expert Parallel</h2>
-<p>In mixture-of-experts (MoE) approaches, the size of the MLP layer is reduced, and multiple ‘expert’ MLPs are active per transformer layer. Experts are divided across available devices, with each token routed to a subset of the experts to induce sparsity in training. This results in a more powerful model with more parameters for the same compute budget.</p>
-<p>Combining tensor parallelism and expert parallelism is possible, but it might not be practical for the MLP ‘expert’ layer, as these layers are already reduced in size and distributed. However, it would still be efficient to apply tensor parallelism to the embedding table and the attention layer.</p>
+<section id="d-parallel-training" class="level1 page-columns page-full">
+<h1>3D Parallel Training</h1>
+<p>In this section, we will explore a common training setup for large language models known as 3D parallel training, which combines tensor, pipeline, and data parallelism.</p>
+<p>Let’s examine how Meta trained LLaMA-3-70B using this method. According to Meta’s blog post:</p>
+<p>They used 15 trillion tokens. The model had a sequence length of 8192. Training was conducted on 16,000 GPUs. Full 3D parallelization was employed. Our objective is to determine the values for <span class="math inline">\(N_\text{TP}\)</span> (tensor parallel device count), <span class="math inline">\(N_\text{PP}\)</span> (pipeline parallel device count), and <span class="math inline">\(N_\text{DP}\)</span> (data parallel device count).</p>
+<p>Tensor parallelism should be performed on all devices within a node for fast intra-node reductions. Assuming NVIDIA GPUs, we have <span class="math inline">\(N_\text{TP}=8\)</span>. This leaves 2048 GPU groups to be divided for pipeline and data parallelism.</p>
+<section id="pipeline-and-data-parallel" class="level2 page-columns page-full">
+<h2 class="anchored" data-anchor-id="pipeline-and-data-parallel">Pipeline and Data Parallel</h2>
+<p>Pipeline parallelism splits the layers into stages, forwarding data between them. A common issue with this approach is the potential for ‘bubbles’ of inactivity. To mitigate this, data is sent in ‘microbatches.’ For instance, if the batch size is 8 and the microbatch size is 4, two microbatches of size 4 are sent. Increasing the number of microbatches reduces the bubble but generally also decreases the microbatch size.</p>
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="pipeline.png" class="img-fluid figure-img"></p>
+<figcaption>A very basic view of pipeline parallel. As we increase the number of microbatches, both the microbatch size and the bubble decreases. <mark style="background: #b2f2bb!important">device 1</mark> calculates the forward pass of one microbatch and forwards it to <mark style="background: #ffc9c9!important">device 2</mark>, who calculates the forward pass and backwards pass before sending it back.</figcaption>
+</figure>
+</div>
+<p>The number of pipeline stages determines the device spread, and the number of microbatches informs the global batch size<a href="#fn10" class="footnote-ref" id="fnref10" role="doc-noteref"><sup>10</sup></a> needed for one forward and backward step. We want to know both! Unfortunately, Meta did not provide this information. We can, however, derive the data parallel value from reasonable default cases of pipeline parallel<a href="#fn11" class="footnote-ref" id="fnref11" role="doc-noteref"><sup>11</sup></a>.</p>
+<div class="no-row-height column-margin column-container"><p><sup>10</sup>&nbsp;global batch size = number of microbatches * microbatch size * <span class="math inline">\(N_\text{DP}\)</span></p><p><sup>11</sup>&nbsp;To reduce the search space, we will set some good baseline values: the microbatch size to 1 (low bubble), the number of microbatches are a ‘reasonable’ multiple of the number of pipeline layers.</p></div><table class="table">
+<colgroup>
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 20%">
+<col style="width: 15%">
+<col style="width: 39%">
+</colgroup>
+<thead>
+<tr class="header">
+<th><span class="math inline">\(N_\text{PP}\)</span></th>
+<th><span class="math inline">\(N_\text{DP}\)</span></th>
+<th>number of microbatches</th>
+<th>Global batch size</th>
+<th>Global batch size <span class="math inline">\(\times\)</span> sequence length</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>4</td>
+<td>512</td>
+<td>8</td>
+<td>4096</td>
+<td>33M</td>
+</tr>
+<tr class="even">
+<td>4</td>
+<td>512</td>
+<td>12</td>
+<td>6144</td>
+<td>50M</td>
+</tr>
+<tr class="odd">
+<td>4</td>
+<td>512</td>
+<td>16</td>
+<td>8192</td>
+<td>67M</td>
+</tr>
+<tr class="even">
+<td>8</td>
+<td>256</td>
+<td>12</td>
+<td>3072</td>
+<td>25M</td>
+</tr>
+<tr class="odd">
+<td>8</td>
+<td>256</td>
+<td>16</td>
+<td>4096</td>
+<td>33M</td>
+</tr>
+<tr class="even">
+<td>8</td>
+<td>256</td>
+<td>20</td>
+<td>5120</td>
+<td>42M</td>
+</tr>
+<tr class="odd">
+<td>16</td>
+<td>128</td>
+<td>20</td>
+<td>2560</td>
+<td>21M</td>
+</tr>
+<tr class="even">
+<td>16</td>
+<td>128</td>
+<td>24</td>
+<td>3072</td>
+<td>25M</td>
+</tr>
+<tr class="odd">
+<td>16</td>
+<td>128</td>
+<td>28</td>
+<td>3584</td>
+<td>30M</td>
+</tr>
+</tbody>
+</table>
+<p>As we see, with an increase of <span class="math inline">\(N_\text{TP}\)</span> we decrease the global batch size potential. Some of these values look huge, but what can we compare it with:</p>
+<ul>
+<li>LLaMA-2-70B was trained on 2B global batch size in tokens</li>
+<li>Deepseek-67B was trained on 19.4M batch size in tokens</li>
+<li>OPT-175B was trained on 2M batch size in tokens</li>
+</ul>
+<p>As an aside, pipeline parallelism is not required in combination with data and tensor parallel, OPT-175B was trained using only tensor-parallel and FSDP on 992 GPUs<a href="#fn12" class="footnote-ref" id="fnref12" role="doc-noteref"><sup>12</sup></a>.</p>
+<div class="no-row-height column-margin column-container"><p><sup>12</sup>&nbsp;From the log-book, we have <span class="math inline">\(N_\text{TP}=8\)</span> on 992 GPUs, leaving 124 groups of 8 GPUs for data parallel training. We also have a local batch size of 8 for each group and a context length of 2048. Multiply 128 group by 8 local batch size by 2048 context length and we have 2031616, roughly 2M.</p></div></section>
+<section id="a-visual-example" class="level2">
+<h2 class="anchored" data-anchor-id="a-visual-example">A Visual Example</h2>
+<p>It’s hard to visualize over 16K GPUs sharding a model, so let’s restrict ourselves to the following setup: <span class="math inline">\(N_\text{TP}=4\)</span>, <span class="math inline">\(N_\text{PP} = 2\)</span> and <span class="math inline">\(n_\text{DP}=2\)</span>. That is, four nodes with 4 GPUs each with two pipeline stages and 2 data parallel stages. Intra-node tensor parallelism is fast, we can have a large number of microbatches to ensure communication between nodes does not bother us and data parallel is essentially the cheapest parallelization techniques in terms of overhead:</p>
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="3d_parallel.png" class="img-fluid figure-img"></p>
+<figcaption><span class="math inline">\(N_\text{TP}=4\)</span>, <span class="math inline">\(N_\text{PP} = 2\)</span> and <span class="math inline">\(n_\text{DP}=2\)</span>. A global batch gets sharded across devices in data parallel mode, the first pipeline layer has half of the transformer weights and uses tensor parallel for fast communication, after which it sends it the data to the second pipeline layer.</figcaption>
+</figure>
+</div>
+<p>That wraps it up for this post. I hope this post helped you understand tensor parallel and perhaps even 3D parallel a bit better. Please let me know what you think, you can contact me on <a href="https://x.com/laurensweitkamp">𝕏</a>. The next post will either discuss pipeline parallel in more depth or distributed sampling strategies, after implementing it in <a href="https://github.com/lweitkamp/numpitron">NuMPItron</a> ofcourse.</p>
 
 
 </section>

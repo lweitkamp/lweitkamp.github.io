@@ -2,10 +2,14 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://lweitkamp.github.io/posts/packing/index.html</loc>
-    <lastmod>2024-06-10T16:29:07.716Z</lastmod>
+    <lastmod>2024-06-10T18:54:07.991Z</lastmod>
   </url>
   <url>
     <loc>https://lweitkamp.github.io/index.html</loc>
-    <lastmod>2024-06-07T14:26:04.913Z</lastmod>
+    <lastmod>2024-06-10T18:53:50.304Z</lastmod>
+  </url>
+  <url>
+    <loc>https://lweitkamp.github.io/posts/numpitron_tensor_parallel/index.html</loc>
+    <lastmod>2024-06-11T20:05:28.679Z</lastmod>
   </url>
 </urlset>
