@@ -21,3 +21,9 @@ citation-location: margin
 
 
 **novel**: artifacts become increasingly unpredictable with respect to the <mark style="color: #1971c2!important">observer</mark>. There is always a less predictable artifact coming further in the future.
+
+![](novel.png)
+
+**learnable**: The system is learnable whenever conditioning on a longer history makes artifacts more predictable.
+
+![](learnable.png)
