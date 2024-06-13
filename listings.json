@@ -2,8 +2,9 @@
   {
     "listing": "/index.html",
     "items": [
-      "/posts/numpitron_tensor_parallel/index.html",
-      "/posts/packing/index.html"
+      "/posts/packing/index.html",
+      "/posts/image_tokenization/index.html",
+      "/posts/numpitron_tensor_parallel/index.html"
     ]
   }
 ]
