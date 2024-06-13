@@ -1,7 +1,7 @@
 ---
 title: "Packing Data for efficient Training and Inference"
 author: "Laurens Weitkamp"
-date: last-modified
+date: 10-01-2024
 draft: false
 
 format:
@@ -59,7 +59,7 @@ When using absolute positional encodings (or ALiBi, or absolute encodings), we n
 
 ![Packed positional encodings.](packed_positional_encoding.png)
 
-For other positional encoding methods, such as RoPE, similar adjustments can be made. For RoPE, this involves resetting the rotation angles.
+For RoPE, you would have to do a similar rest.
 
 ### Update the Attention Mask
 In self-attention mechanisms, it is necessary to ensure that one sequence cannot attend to another within the same packed context. This requires merging autoregressive masks for the self-attention layer, enforcing the restriction effectively:
@@ -76,13 +76,10 @@ It's worth your time looking at figures [3](https://arxiv.org/pdf/2107.02027.pdf
 Another paper that discusses masked packing but during inference time that goes in depth on the effect of packing on prefilling and the time to first token is [Prepacking](https://arxiv.org/abs/2404.09529).
 
 ## Can we Ignore Cross Contamination?
-From personal experience, there is little support for packing in public codebases, often justified by the assumption that the data is not too correlated. Interestingly, the approach in [Structured Packing in LLM Training Improves Long Context Utilization](https://arxiv.org/abs/2312.17296) essentially ignores proper masking to **benefit** long-context learning.
+From personal experience, there is little support for packing in public codebases, often justified by the assumption that the data is not too correlated. That could be true, but it is a strong assumption to make. Interestingly, the approach in [Structured Packing in LLM Training Improves Long Context Utilization](https://arxiv.org/abs/2312.17296) essentially ignores proper masking to **benefit** long-context learning. However, the models are small scale and the data is not inherently long context.
 
-
-It is interesting to see that GPT-3 did not use masked packing (from the quote above). It is quite possible that these cross contamination performance issues are not present in large scale training. Ofcourse, GPT-4 might be trained by masked packing, but that is not publicly disclosed.
-
-Does Gemini/PaLM use masked packing? If they use t5x it seems so[^8]:
+Given that t5x does have a proper packing implementation[^8], I would bet that Google did some internal checks to see if it helps or not.
+You can choose to ignore it, but you probably don't want to risk it at the frontier level where your infra is optimized anyway.
 
 [^8]: They call it *segmented data* - [from the T5x codebase](https://github.com/google-research/t5x/blob/df5da64315dd8ee269626f66bf60eb8f12a37124/t5x/examples/t5/network.py#L310-L317).
 
-> A sequence length of 2048 was used for all models. Input examples are concatenated together and then split into sequences of exactly 2048 tokens, so that there are no padding tokens, but examples may be split in the middle. Input examples are differentiated from one another with a special [eod] token.
