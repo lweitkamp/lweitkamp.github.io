@@ -1,9 +1,8 @@
 ---
-title: "Packing"
+title: "Packing Data for efficient Training and Inference"
 author: "Laurens Weitkamp"
-date: "2023-05-01"
+date: 10-01-2024
 draft: false
-categories: [transformer, trainign, packing, language modelling]
 
 format:
   html:
@@ -13,114 +12,74 @@ reference-location: margin
 citation-location: margin
 ---
 
-When we add several sequences to a single batch sample, we are **packing** that sample. This is typically done to fill the context length of a sample and reduce the amount of padding. If we have a context length of $c$ with two sequences $A$ and $B$ of lengths $k$ and $v$ respectively, the following figure depicts a *packed* sample.
+The context length of transformer models is rapidly increasing with each new generation of frontier models. For instance, Google's latest Gemini 1.5 model can process up to 1 million tokens, equivalent to 1 hour of video or approximately 700,000 words. This increase is driven by advancements in hardware and the development of more efficient algorithms tailored to the specific demands of long-context training[^1].
 
-![Two sequences "packed"](pack_sequences.svg)
+[^1]: An orthogonal approach involves training with a short context but performing inference on a long context. Packing techniques can still be beneficial during inference.
 
-## In the Literature
-Packing is briefly described in most papers (in fact, most authors cite T5 for it), here are some from the literature:
+Long contexts introduce several challenges: identifying data that inherently requires long contexts (such as books, podcasts, and videos) and efficiently handling smaller context data. Simply concatenating these documents and feeding them into an autoregressive transformer can lead to *cross-contamination* of sequences. For instance, predicting a sequence `S2` from an unrelated sequence `S1` becomes nearly impossible if there is a significant difference in their subject matter.
 
+
+The same issue arises during inference. If we dynamically batch tokens from different users, efficiency can be improved by grouping shorter conversations in the same batch. The solution to both of these issues is a technique called *packing*.
+
+# Packing
+Packing sequences is a technique used in transformer models during training and inference to optimize the use of context length and reduce padding.
+
+Consider a transformer model with a context length denoted as `ctx`. Let's take two sequences, `S1` and `S2`, with lengths `n` and `m` respectively, where `n + m <= ctx`. If we treat these sequences separately, the total padding required would be `ctx - n + ctx - m` tokens. However, by packing these sequences together into a single context, we can significantly reduce the padding to only `ctx - n - m` tokens.
+
+The figure below illustrates the concept of packing two sequences.
+
+![Two sequences "packed".](packed_sequences.png)
+
+
+## Literature Review
+Packing is briefly described in most papers on language modelling (in fact, most authors cite T5 for it), here are some from the literature:
 
 | Paper | Quote |
 | -- | -- |
-| RoBERTa[^1] | *"Each input is ***packed*** with full sentences sampled contiguously from one or more documents, such that the total length is at most 512 tokens."* |
-| GPT-3[^2] | *"During training we always train on sequences of the full nctx = 2048 token context window, ***packing*** multiple documents into a single sequence when documents are shorter than 2048, in order to increase computational efficiency."* |
-| T5[^3] | *"Whenever possible, we “***pack***” multiple sequences into each entry of the batch so that our batches contain roughly 216 = 65,536 tokens."* |
-| T0[^4] | *"we use ***packing*** to combine multiple training examples into a single sequence to reach the maximum sequence length."* |
+| RoBERTa[^2] | *"Each input is ***packed*** with full sentences sampled contiguously from one or more documents, such that the total length is at most 512 tokens."* |
+| GPT-3[^3] | *"During training we always train on sequences of the full nctx = 2048 token context window, ***packing*** multiple documents into a single sequence when documents are shorter than 2048, in order to increase computational efficiency."* |
+| T5[^4] | *"Whenever possible, we “***pack***” multiple sequences into each entry of the batch so that our batches contain roughly 216 = 65,536 tokens."* |
+| T0[^5] | *"we use ***packing*** to combine multiple training examples into a single sequence to reach the maximum sequence length."* |
 
-[^1]: [RoBERTa: A Robustly Optimized BERT Pretraining Approach](https://arxiv.org/abs/1907.11692)
-[^2]: [Language Models are Few-Shot Learners](https://arxiv.org/abs/2005.14165)
-[^3]: [Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer](https://arxiv.org/abs/1910.10683)
-[^4]: [Multitask Prompted Training Enables Zero-Shot Task Generalization](https://arxiv.org/abs/2110.08207)
+[^2]: [RoBERTa: A Robustly Optimized BERT Pretraining Approach](https://arxiv.org/abs/1907.11692)
+[^3]: [Language Models are Few-Shot Learners](https://arxiv.org/abs/2005.14165)
+[^4]: [Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer](https://arxiv.org/abs/1910.10683)
+[^5]: [Multitask Prompted Training Enables Zero-Shot Task Generalization](https://arxiv.org/abs/2110.08207)
 
-## Potential Issues
-Imagine we are using an autoregressive transformer decoder to predict token $B_1$ given a completely unrelated randomly sampled sentence $A$. We are essentially predicting randomness. This is called *cross-contamination* - this ***should*** hurt the loss since whatever we predict would be somewhat nonsensical. To counter the effect of cross-contamination, the GPT-3 authors chose to simply add an `end-of-document` token embedding between packed sequences which seems to work fine.
-
-Masked Language Modeling approaches like RoBERTa have different issues when it comes to cross-contamination. Sequences are sampled from documents and differentiated by the `end-of-document`, but it appears that sampling sequences from different documents hurts the loss when compared to sequences from the same document. Sampling from the same document is often times difficult or impossible, so the authors take the loss.
-
-## Packing and Masking
-As mentioned, we can simply add the `end-of-document` token to differentiate sequences packed, but there is a better alternative that involves masking. Discussed in more detail in Krell et al.[^5], we can sum it up in two points.
+Some approaches use the packing described above naively and add an `end-of-document` token after the sequence is done to let the model figure out the difference between samples. This *does* seem to hurt performance due to cross-contamination mentioned before, but it might not have as big of an impact at scale[^5].
 
 [^5]: [Efficient Sequence Packing without Cross-contamination](https://arxiv.org/abs/2107.02027)
 
-#### 1. Change in Positional Encoding
-Positional encodings/embeddings should be adjusted to account for packed sequences. the extra sequences that are packed should start at an appropriate positional embedding, not just following the previous sequences. If we have a positional encoder based on the token index $\text{PE}(i)$, the following figure shows how to reset the index:
+## Dealing with Cross Contamination
+To prevent cross-contamination when packing sequences, it is crucial to update both the positional information and the attention masks, not just concatenating the sequences. This ensures that the attention mechanism is still valid.
 
-![Packed Positional Embedding](pack_positional_encoding.svg)
-
-#### 2. Change in Self-Attention Mask
-Masking in self-attention needs to ensure that one sequence cannot attend to another sequence. We need to *merge* autoregressive masks for the self-attention layer. Some example code:
-
-```{python}
-import numpy as np
-from typing import List
+### Update Positional Information
+When using absolute positional encodings (or ALiBi, or absolute encodings), we need to reset the positional encoding index at the start of each new sample within the packed sequence. This reset ensures that each sequence retains its positional context, which is essential for the model's accuracy.
 
 
-def create_mask(sequence_lengths: List[int]) -> np.ndarray:
-    """Create autoregressive mask. The input is assumed to be a single
-    sequence (list of size one) or a pack of sequences. The output is a
-    single autoregressive mask.
+![Packed positional encodings.](packed_positional_encoding.png)
 
-    Args:
-        sequence_lengths: List of sequences lengths.
+For RoPE, you would have to do a similar rest.
 
-    Returns:
-        Autoregressive masks.
-    """
+### Update the Attention Mask
+In self-attention mechanisms, it is necessary to ensure that one sequence cannot attend to another within the same packed context. This requires merging autoregressive masks for the self-attention layer, enforcing the restriction effectively:
 
-    def create_autoregressive_mask(sequence_length: int) -> np.ndarray:
-        mask = np.triu(np.ones((sequence_length, sequence_length)), k=1)
-        return mask
+![A packed attention mask.](packed_attention_mask.png)
 
-    sequence, offset = sum(sequence_lengths), 0
-    mask = np.ones((sequence, sequence), dtype=np.bool_)
-    for length in sequence_lengths:
-        mask[
-            offset:offset+length,
-            offset:offset+length,
-        ] = create_autoregressive_mask(length)
-        offset += length
-    return mask
-```
+This might be the most intrusive part to the codebase - it will require actually calculating a distinct attention mask per batch where we otherwise can simply have the standard diagonal created once for the whole batch. This is probably the deal-breaker for most codebases, since you need to implement it effectively otherwise flash attention will not work, you increase mask memory consumption, etc.
 
-In short: **repeatedly pack sequences and merge their respective autoregressive masks until we hit the context length.**
-A merge operation of two masks can be seen below:
+### That's it!
+Properly implementing these updates ensures that the model's gradient step remains consistent, regardless of whether sequences are processed individually or packed.
 
-![Packed Mask](pack_mask_merge.svg)
+It's worth your time looking at figures [3](https://arxiv.org/pdf/2107.02027.pdf#page=7) and [4](https://arxiv.org/pdf/2107.02027.pdf#page=8), it's from a paper that introduces the concept of cross-contamination. The paper additionally explains the performance of packing and the effect of 'proper' masking, it's a great read!
 
+Another paper that discusses masked packing but during inference time that goes in depth on the effect of packing on prefilling and the time to first token is [Prepacking](https://arxiv.org/abs/2404.09529).
 
-With additive-masked attention, everything in the white region should be set to negative infinity to ensure that they will not be used during softmax.
-If properly implemented, you might notice that it makes no difference if we have $n$ sequences or $l \leq n$ packed sequences sourced from the $n$ - the gradient step should[^6] be equal.
-It's worth your time looking at figures [3](https://arxiv.org/pdf/2107.02027.pdf#page=7) and [4](https://arxiv.org/pdf/2107.02027.pdf#page=8) in the paper, they explain the performance of packing and the effect of 'proper' masking.
+## Can we Ignore Cross Contamination?
+From personal experience, there is little support for packing in public codebases, often justified by the assumption that the data is not too correlated. That could be true, but it is a strong assumption to make. Interestingly, the approach in [Structured Packing in LLM Training Improves Long Context Utilization](https://arxiv.org/abs/2312.17296) essentially ignores proper masking to **benefit** long-context learning. However, the models are small scale and the data is not inherently long context.
 
-[^6]: In practice, however, ...
-
-It's not a complete free lunch though.
-We can normally save a single triangular matrix for self attention that is pre-computed, but now we will need an individual mask per sample.
-Typical flash attention implementations won't even register a mask but will just perform masking based on the sequence index.
-
-
-## Closing Thoughts
-Packing increases the effective batch size, allowing us to forward more samples (= more throughput!) through the model and converge quicker. To maximize the performance when using packing:
-
-1. Mask correctly for positional encoding
-2. Mask correctly for self-attention
-
-
-In practice we see both the 'masked' packing and packing using the `end-of-document` approaches. In theory the `end-of-document` token can communicate itself to all other tokens in the residual stream.
-
-
-It's interesting to see that GPT-3 did not use masked packing. Perhaps the loss increase by not masking properly is not as bad or completely absent in large scale training? It is also possible that GPT4 *is* trained using masked packing. Does Gemini/PaLM use masked packing? If they use t5x it seems so[^8], but they still use the end-of-document token[^9]:
+Given that t5x does have a proper packing implementation[^8], I would bet that Google did some internal checks to see if it helps or not.
+You can choose to ignore it, but you probably don't want to risk it at the frontier level where your infra is optimized anyway.
 
 [^8]: They call it *segmented data* - [from the T5x codebase](https://github.com/google-research/t5x/blob/df5da64315dd8ee269626f66bf60eb8f12a37124/t5x/examples/t5/network.py#L310-L317).
-[^9]: Page 10 of the [PaLM](https://arxiv.org/pdf/2204.02311.pdf#page=10) paper.
 
-
-> A sequence length of 2048 was used for all models. Input examples are concatenated together and then split into sequences of exactly 2048 tokens, so that there are no padding tokens, but examples may be split in the middle. Input examples are differentiated from one another with a special [eod] token.
-
-A large part of packing seems to be that it is this poorly documented practice that top companies probably have a tremendous amount of in-house knowledge about.
-
-For an *offical* implementation that packs sequences see the TensorFlow tensor2tensor library[^10]. It seems that Huggingface does not support packing[^11] - weird!
-
-[^10]: [github.com/tensorflow/tensor2tensor](https://github.com/tensorflow/tensor2tensor/blob/master/tensor2tensor/data_generators/generator_utils.py#L598)
-[^11]: [https://github.com/huggingface/transformers/issues/17726](https://github.com/huggingface/transformers/issues/17726) & [https://github.com/huggingface/transformers/issues/6661](https://github.com/huggingface/transformers/issues/6661)
