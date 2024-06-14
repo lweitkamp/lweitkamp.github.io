@@ -3,7 +3,6 @@
     "listing": "/index.html",
     "items": [
       "/posts/packing/index.html",
-      "/posts/image_tokenization/index.html",
       "/posts/numpitron_tensor_parallel/index.html"
     ]
   }

@@ -28,18 +28,11 @@
     "text": "Can we Ignore Cross Contamination?\nFrom personal experience, there is little support for packing in public codebases, often justified by the assumption that the data is not too correlated. That could be true, but it is a strong assumption to make. Interestingly, the approach in Structured Packing in LLM Training Improves Long Context Utilization essentially ignores proper masking to benefit long-context learning. However, the models are small scale and the data is not inherently long context.\nGiven that t5x does have a proper packing implementation7, I would bet that Google did some internal checks to see if it helps or not. You can choose to ignore it, but you probably don’t want to risk it at the frontier level where your infra is optimized anyway.\n\n\n7 They call it segmented data - from the T5x codebase."
   },
   {
-    "objectID": "posts/image_tokenization/index.html",
-    "href": "posts/image_tokenization/index.html",
-    "title": "Image Tokenization",
-    "section": "",
-    "text": "Meta recently released the Chameleon paper1, an early-fusion multimodal model. I had to look-up what early fusion meant, the definition of which was described to me in the XYZ paper:\n1 https://gwern.net/scaling-hypothesisChamel\nOne very interesting emergence in recent years due to the Vision Transformer (ViT), is the idea of image tokenization. Transformers are not the best at generating visual data. Probing works, but you won’t see a vision transformer outperforming a good resnet-style encoder-decoder.\nThe Transformer has drastically changed the trajectory of deep learning since 2017. The Malleus Transformatoris is our chosen tool, and every single modality looks like a nail. Even vision, the modality I am most familiar with, could not escape.\nTransformers benefit from the blessing of scale23, a benefit we should not take too lightly. However, even at scale, ViT’s are still not great at generation.\n\n\n2 https://gwern.net/scaling-hypothesis3 Scaling Vision Transformers to 22 Billion Parameters"
-  },
-  {
     "objectID": "index.html",
     "href": "index.html",
     "title": "Home",
     "section": "",
-    "text": "Hey, this is the website of Laurens Weitkamp. I’m a machine learning engineer interested in sequential decision making, computer vision, and multimodal models.\nI work for Thirona, where I train deep nets for medical imaging. Before that, I got my graduate degree in Artifical Intelligence where I specialized in hierarchical reinforcement learning and published a paper on explainable RL.\n\n\nRecent Posts\n\n\n\n\n\n\n\n\n\n\nTitle\n\n\nDate\n\n\n\n\n\n\nPacking Data for efficient Training and Inference\n\n\nOct 1, 2024\n\n\n\n\nImage Tokenization\n\n\nJun 13, 2024\n\n\n\n\nTensor Parallelism\n\n\nJun 12, 2024\n\n\n\n\n\nNo matching items"
+    "text": "Hey, this is the website of Laurens Weitkamp. I’m a machine learning engineer interested in sequential decision making, computer vision, and multimodal models.\nI work for Thirona, where I train deep nets for medical imaging. Before that, I got my graduate degree in Artifical Intelligence where I specialized in hierarchical reinforcement learning and published a paper on explainable RL.\n\n\nRecent Posts\n\n\n\n\n\n\n\n\n\n\nTitle\n\n\nDate\n\n\n\n\n\n\nPacking Data for efficient Training and Inference\n\n\nOct 1, 2024\n\n\n\n\nTensor Parallelism\n\n\nJun 12, 2024\n\n\n\n\n\nNo matching items"
   },
   {
     "objectID": "posts/numpitron_tensor_parallel/index.html",
