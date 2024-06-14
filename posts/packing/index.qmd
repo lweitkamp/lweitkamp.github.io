@@ -66,7 +66,7 @@ In self-attention mechanisms, it is necessary to ensure that one sequence cannot
 
 ![A packed attention mask.](packed_attention_mask.png)
 
-This might be the most intrusive part to the codebase - it will require actually calculating a distinct attention mask per batch where we otherwise can simply have the standard diagonal created once for the whole batch. I imagine implementing this efficiently for ALiBi is not an enjoyable assignment.
+This might be the most intrusive part to the codebase - it will require actually calculating a distinct attention mask per batch where we otherwise can simply have the standard diagonal created once for the whole batch. This is probably the deal-breaker for most codebases, since you need to implement it effectively otherwise flash attention will not work, you increase mask memory consumption, etc.
 
 ### That's it!
 Properly implementing these updates ensures that the model's gradient step remains consistent, regardless of whether sequences are processed individually or packed.
