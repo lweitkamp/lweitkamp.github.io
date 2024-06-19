@@ -38,7 +38,7 @@ Note: the behavior of the NuMPItron implementation of AllGather is similar to `a
 
 [NCLL](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html#allreduce) | [PyTorch Docs](https://pytorch.org/docs/stable/distributed.html#torch.distributed.all_reduce) | [NuMPItron](https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/distributed/all_reduce.py)
 
-![](allreduce.png)
+![](all_reduce.png)
 
 Perform a reduction (`op={SUM,MAX,...}`) and broadcast to all devices. PyTorch has quite a [large amount](https://github.com/pytorch/pytorch/blob/dfc4b608e1c4343ae0a32130b5f2f47acb04fad1/torch/csrc/distributed/c10d/Types.hpp#L36-L46) of reductions available.
 
@@ -107,7 +107,7 @@ Perform a reduction (`op={SUM,MAX,...}`) and send to a single device (`dst=RANK`
 # ReduceScatter {#sec-reducescatter}
 [NCLL](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html#reducescatter) | [PyTorch Docs](https://pytorch.org/docs/stable/distributed.html#torch.distributed.reduce_scatter) | [NuMPItron](https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/distributed/reduce_scatter.py)
 
-![](reducescatter.png)
+![](reduce_scatter.png)
 
 ReduceScatter is found in Megatron-LM style [**Sequence Parallel**](https://arxiv.org/abs/2205.05198). LayerNorm and Dropout are independent operations on the sequence dim. One option here is to simply add a [Scatter - Section @sec-scatter] and [Gather - Section @sec-gather] operations before and after these two layers, but that would mean we have more overhead if combined with tensor parallel (which is the goal). Instead, we can perform a ReduceScatter where we would originally AllReduce for tensor parallel. Where would normally perform the identity operation in tensor parallel, we instead Gather.
 
