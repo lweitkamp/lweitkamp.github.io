@@ -14,7 +14,9 @@ citation-location: margin
 number-sections: true
 ---
 
-A reference I made of collective communications in multiprocessing systems while working on [NuMPItron](https://github.com/lweitkamp/numpitron). There is a general guide to performant versions of each comm [here](https://web.cels.anl.gov/~thakur/papers/ijhpca-coll.pdf), although it is very specific for MPI and the same does not have to hold for GPUs. Gloo, created by Meta, also has a decent [reference guide](https://github.com/facebookincubator/gloo/blob/main/docs/algorithms.md).
+This is a reference page I made of collective communications in multiprocessing systems while working on [NuMPItron](https://github.com/lweitkamp/numpitron). I previously made a blog post about tensor parallel training in NuMPItron [here](https://lweitkamp.github.io/posts/numpitron_tensor_parallel/). This article is in some sense a work in progress and I will keep updating it as I read more papers.
+
+There is a general guide to performant versions of each comm [here](https://web.cels.anl.gov/~thakur/papers/ijhpca-coll.pdf), although it is very specific for MPI and the same does not have to hold for GPUs. Gloo, created by Meta, also has a decent [reference guide](https://github.com/facebookincubator/gloo/blob/main/docs/algorithms.md).
 
 
 # AllGather {#sec-allgather}
@@ -22,8 +24,15 @@ A reference I made of collective communications in multiprocessing systems while
 
 ![](allgather.png)
 
-- short description
-- where is it used in DL
+AllGather is often used to combine a sharded tensor on all devices. As such, any sharded model (tensor/pipeline parallel) could be AllGathered on all devices in full.
+
+It can be found in [**ZeRO**](https://arxiv.org/abs/1910.02054), where parameters are AllGathered during the forward and backward pass per layer.
+
+When using an asynchronous form of [**Tensor Parallel**](https://arxiv.org/abs/1909.08053), AllGather is used after a column parallel layer to gather the weights (gradients) at the end of the forward (backward) pass.
+
+AllGather is also found in Megatron-LM style [**sequence Parallel**](https://arxiv.org/abs/2205.05198), where we gather the data from the LayerNorm & Dropout layers before forward it through the Attention and MLP layers.
+
+Note: the behavior of the NuMPItron implementation of AllGather is similar to `all_gather_into_tensor` in PyTorch.
 
 # AllReduce {#sec-allreduce}
 
@@ -35,10 +44,10 @@ Perform a reduction (`op={SUM,MAX,...}`) and broadcast to all devices. PyTorch h
 
 AllReduce can be found in **distributed data parallel**, where you sum the gradients for each weight over devices in the backward pass.
 
-Allreduce is also found in **tensor parallel**. Here we sum each forward and backward pass of the MLP and Attention layers (and do some reductions in the embedding and loss calculation too, see [my post on tensor parallel](https://lweitkamp.github.io/posts/numpitron_tensor_parallel/)).
+Allreduce is also found in [**tensor parallel**](https://arxiv.org/abs/1909.08053). Here we sum each forward and backward pass of the MLP and Attention layers (and do some reductions in the embedding and loss calculation too, see [my post on tensor parallel](https://lweitkamp.github.io/posts/numpitron_tensor_parallel/)).
 
 ## Ring AllReduce
-[Horovod](https://github.com/horovod/horovod), ye old distributed training framework for TensorFlow built by Uber back in the day, was too slow. Specifically, the AllReduce implementation was too slow. Originally, the algorithm implementation performed something like a [reduce - Section @sec-reduce] and [broadcast - Section @sec-broadcast] operation on the data. A single/root device would collect the data, perform the reduction, and send it to all other devices. The issue is that it creates a bandwidth bottleneck: increase the number of devices and the incoming root will not be able to receive and send data fast enough.
+[Horovod](https://github.com/horovod/horovod), ye old distributed training framework for TensorFlow built by Uber back in the day, was too slow. Specifically, the AllReduce implementation was too slow. Originally, the algorithm implementation performed something like a [Reduce - Section @sec-reduce] and [Broadcast - Section @sec-broadcast] operation on the data. A single/root device would collect the data, perform the reduction, and send it to all other devices. The issue is that it creates a bandwidth bottleneck: increase the number of devices and the incoming root will not be able to receive and send data fast enough.
 
 An engineer working at Baidu Research figured out an improvement based on a technique in high performance computing, a ring message passing scheme (the same one described in the paper above). If you picture the devices in a topological ring, each device receives data from its left neighbour and sends data to its right neighbour. In the figure below[^1] we have three devices and three chunks of data. The improved algorithm starts with a series of [ReduceScatter - Section @sec-reducescatter] operations where each device sends one of its chunk to its neighbor untill each device has one complete chunk:
 
@@ -58,28 +67,24 @@ This implementation makes scaling distributed data parallel much more efficient,
 
 ![](all_to_all.png)
 
+All to All reminds me of a matrix transposition, we essentially scatter and gather the data based on the device rank.
 
-- short description
-- where is it used in DL
+It is found in DeepSpeed style sequence parallel called [**Ulysses**](https://arxiv.org/abs/2309.14509), but I have not read the paper in depth yet.
+
 
 # Broadcast {#sec-broadcast}
 [NCLL](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html#broadcast) | [PyTorch Docs](https://pytorch.org/docs/stable/distributed.html#torch.distributed.broadcast) | [NuMPItron](https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/distributed/broadcast.py)
 
 ![](broadcast.png)
 
-
-- short description
-- where is it used in DL
-
+A single device sends data to all other devices. In data parallel you would scatter the data to each device, but in tensor parallel you want each device to work on the same set of data, so you could broadcast the same batch of data to all tensor parallel ranks.
 
 # Gather {#sec-gather}
 [NCLL](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html#gather) | [PyTorch Docs](https://pytorch.org/docs/stable/distributed.html#torch.distributed.gather) | [NuMPItron](https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/distributed/gather.py)
 
 ![](gather.png)
 
-
-- short description
-- where is it used in DL
+Gather data from all devices to a single device.
 
 
 # Receive / Send {#sec-receive}
@@ -87,9 +92,9 @@ This implementation makes scaling distributed data parallel much more efficient,
 
 ![](sendrecv.png){width=65%}
 
+A device sends or receives data from another rank. In some sense, most of the collective communications are using send / receive.
 
-- short description
-- where is it used in DL
+In **Pipeline Parallel** each pipeline layer sends a batch of data to the next layer in the forward pass, and sends the gradients in the backwards pass to the previous layer.
 
 
 # Reduce {#sec-reduce}
@@ -97,17 +102,16 @@ This implementation makes scaling distributed data parallel much more efficient,
 
 ![](reduce.png)
 
-Perform a reduction (`op={SUM,MAX,...}`) and send to a particular rank(`dst=RANK`).
-
+Perform a reduction (`op={SUM,MAX,...}`) and send to a single device (`dst=RANK`).
 
 # ReduceScatter {#sec-reducescatter}
 [NCLL](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html#reducescatter) | [PyTorch Docs](https://pytorch.org/docs/stable/distributed.html#torch.distributed.reduce_scatter) | [NuMPItron](https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/distributed/reduce_scatter.py)
 
 ![](reducescatter.png)
 
-- short description
+ReduceScatter is found in Megatron-LM style [**Sequence Parallel**](https://arxiv.org/abs/2205.05198). LayerNorm and Dropout are independent operations on the sequence dim. One option here is to simply add a [Scatter - Section @sec-scatter] and [Gather - Section @sec-gather] operations before and after these two layers, but that would mean we have more overhead if combined with tensor parallel (which is the goal). Instead, we can perform a ReduceScatter where we would originally AllReduce for tensor parallel. Where would normally perform the identity operation in tensor parallel, we instead Gather.
 
-From the FSDP paper: https://engineering.fb.com/2021/07/15/open-source/fsdp/attachment/fsdp-graph-2a/.
+PyTorch [**Fully Sharded Data Parallel**](https://arxiv.org/abs/2304.11277) used ReduceScatter to sum the gradients in the backwards pass but to ensure that each device only keeps a shard of the gradients. The same can be used in ZeRO.
 
 
 # Scatter {#sec-scatter}
@@ -116,3 +120,7 @@ From the FSDP paper: https://engineering.fb.com/2021/07/15/open-source/fsdp/atta
 ![](scatter.png)
 
 Also known as one-to-all, an operation that shards the data block on a chosen device evenly amongst all other devices in the same group.
+
+Scatter is used in [**tensor parallel**](https://arxiv.org/abs/1909.08053) to initially shard the weights of the embedding, MLP, and attention weights across devices.
+
+Scatter is also used in **data parallel** when we have to shard the batch across devices.
