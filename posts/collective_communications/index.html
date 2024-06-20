@@ -7,9 +7,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 <meta name="author" content="Laurens Weitkamp">
-<meta name="dcterms.date" content="2024-06-12">
+<meta name="dcterms.date" content="2024-01-25">
 
-<title>Open Ended Learning</title>
+<title>Collective Communications Reference</title>
 <style>
 code{white-space: pre-wrap;}
 span.smallcaps{font-variant: small-caps;}
@@ -57,7 +57,7 @@ ul.task-list li input[type="checkbox"] {
 <link rel="stylesheet" href="../../styles.css">
 </head>
 
-<body class="floating nav-fixed">
+<body class="floating nav-fixed slimcontent">
 
 <div id="quarto-search-results"></div>
   <header id="quarto-header" class="headroom fixed-top quarto-banner">
@@ -95,7 +95,7 @@ ul.task-list li input[type="checkbox"] {
 <header id="title-block-header" class="quarto-title-block default toc-left page-columns page-full">
   <div class="quarto-title-banner page-columns page-full">
     <div class="quarto-title column-body">
-      <h1 class="title">Open Ended Learning</h1>
+      <h1 class="title">Collective Communications Reference</h1>
                       </div>
   </div>
     
@@ -112,7 +112,7 @@ ul.task-list li input[type="checkbox"] {
       <div>
       <div class="quarto-title-meta-heading">Published</div>
       <div class="quarto-title-meta-contents">
-        <p class="date">June 12, 2024</p>
+        <p class="date">January 25, 2024</p>
       </div>
     </div>
     
@@ -123,43 +123,114 @@ ul.task-list li input[type="checkbox"] {
   </header><div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
 <!-- sidebar -->
   <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto">
-    
+    <nav id="TOC" role="doc-toc" class="toc-active" data-toc-expanded="99">
+    <h2 id="toc-title">On this page</h2>
+   
+  <ul>
+  <li><a href="#sec-allgather" id="toc-sec-allgather" class="nav-link active" data-scroll-target="#sec-allgather"><span class="header-section-number">1</span> AllGather</a></li>
+  <li><a href="#sec-allreduce" id="toc-sec-allreduce" class="nav-link" data-scroll-target="#sec-allreduce"><span class="header-section-number">2</span> AllReduce</a>
+  <ul class="collapse">
+  <li><a href="#ring-allreduce" id="toc-ring-allreduce" class="nav-link" data-scroll-target="#ring-allreduce"><span class="header-section-number">2.1</span> Ring AllReduce</a></li>
+  </ul></li>
+  <li><a href="#sec-alltoall" id="toc-sec-alltoall" class="nav-link" data-scroll-target="#sec-alltoall"><span class="header-section-number">3</span> All to All</a></li>
+  <li><a href="#sec-broadcast" id="toc-sec-broadcast" class="nav-link" data-scroll-target="#sec-broadcast"><span class="header-section-number">4</span> Broadcast</a></li>
+  <li><a href="#sec-gather" id="toc-sec-gather" class="nav-link" data-scroll-target="#sec-gather"><span class="header-section-number">5</span> Gather</a></li>
+  <li><a href="#sec-receive" id="toc-sec-receive" class="nav-link" data-scroll-target="#sec-receive"><span class="header-section-number">6</span> Receive / Send</a></li>
+  <li><a href="#sec-reduce" id="toc-sec-reduce" class="nav-link" data-scroll-target="#sec-reduce"><span class="header-section-number">7</span> Reduce</a></li>
+  <li><a href="#sec-reducescatter" id="toc-sec-reducescatter" class="nav-link" data-scroll-target="#sec-reducescatter"><span class="header-section-number">8</span> ReduceScatter</a></li>
+  <li><a href="#sec-scatter" id="toc-sec-scatter" class="nav-link" data-scroll-target="#sec-scatter"><span class="header-section-number">9</span> Scatter</a></li>
+  </ul>
+</nav>
 </nav>
 <div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
 <!-- margin-sidebar -->
     <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
     </div>
 <!-- main -->
-<main class="content quarto-banner-title-block" id="quarto-document-content">
+<main class="content quarto-banner-title-block page-columns page-full" id="quarto-document-content">
 
 
 
 
 
-<div class="callout callout-style-default callout-note no-icon callout-titled" title="**Definition**">
-<div class="callout-header d-flex align-content-center">
-<div class="callout-icon-container">
-<i class="callout-icon no-icon"></i>
-</div>
-<div class="callout-title-container flex-fill">
-<strong>Definition</strong>
-</div>
-</div>
-<section id="from-the-perspective-of-an-observer-a-system-is-open-ended-if-and-only-if-the-sequence-of-artifacts-it-produces-is-both-novel-and-learnable." class="level3 callout-body-container callout-body">
-<h3 class="anchored" data-anchor-id="from-the-perspective-of-an-observer-a-system-is-open-ended-if-and-only-if-the-sequence-of-artifacts-it-produces-is-both-novel-and-learnable.">From the perspective of an observer, a <mark style="color: #2f9e44!important">system</mark> is open-ended if and only if the sequence of <mark style="color: #a18072!important">artifacts</mark> it produces is both novel and learnable.</h3>
+<p>This is a reference page I made of collective communications in multiprocessing systems while working on <a href="https://github.com/lweitkamp/numpitron">NuMPItron</a>. I previously made a blog post about tensor parallel training in NuMPItron <a href="https://lweitkamp.github.io/posts/numpitron_tensor_parallel/">here</a>. This article is in some sense a work in progress and I will keep updating it as I read more papers.</p>
+<p>There is a general guide to performant versions of each comm <a href="https://web.cels.anl.gov/~thakur/papers/ijhpca-coll.pdf">here</a>, although it is very specific for MPI and the same does not have to hold for GPUs. Gloo, created by Meta, also has a decent <a href="https://github.com/facebookincubator/gloo/blob/main/docs/algorithms.md">reference guide</a>.</p>
+<section id="sec-allgather" class="level1" data-number="1">
+<h1 data-number="1"><span class="header-section-number">1</span> AllGather</h1>
+<p><a href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html#allgather">NCCL</a> | <a href="https://pytorch.org/docs/stable/distributed.html#torch.distributed.all_gather">PyTorch Docs</a> | <a href="https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/distributed/all_gather.py">NuMPItron</a></p>
+<p><img src="allgather.png" class="img-fluid"></p>
+<p>AllGather is often used to combine a sharded tensor on all devices. As such, any sharded model (tensor/pipeline parallel) could be AllGathered on all devices in full.</p>
+<p>It can be found in <a href="https://arxiv.org/abs/1910.02054"><strong>ZeRO</strong></a>, where parameters are AllGathered during the forward and backward pass per layer.</p>
+<p>When using an asynchronous form of <a href="https://arxiv.org/abs/1909.08053"><strong>Tensor Parallel</strong></a>, AllGather is used after a column parallel layer to gather the weights (gradients) at the end of the forward (backward) pass.</p>
+<p>AllGather is also found in Megatron-LM style <a href="https://arxiv.org/abs/2205.05198"><strong>sequence Parallel</strong></a>, where we gather the data from the LayerNorm &amp; Dropout layers before forward it through the Attention and MLP layers.</p>
+<p>Note: the behavior of the NuMPItron implementation of AllGather is similar to <code>all_gather_into_tensor</code> in PyTorch.</p>
 </section>
-</div>
-<div class="quarto-figure quarto-figure-center">
-<figure class="figure">
-<p><img src="artefact_generating.png" class="img-fluid figure-img"></p>
-<figcaption>A <mark style="color: #2f9e44!important">system</mark> generating a sequence of <mark style="color: #a18072!important">artifacts</mark>. Some artifacts are conditionaly generated based on previous generations, some are not.</figcaption>
-</figure>
-</div>
-<p><strong>novel</strong>: artifacts become increasingly unpredictable with respect to the <mark style="color: #1971c2!important">observer</mark>. There is always a less predictable artifact coming further in the future.</p>
-<p><img src="novel.png" class="img-fluid"></p>
-<p><strong>learnable</strong>: The system is learnable whenever conditioning on a longer history makes artifacts more predictable.</p>
-<p><img src="learnable.png" class="img-fluid"></p>
+<section id="sec-allreduce" class="level1 page-columns page-full" data-number="2">
+<h1 data-number="2"><span class="header-section-number">2</span> AllReduce</h1>
+<p><a href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html#allreduce">NCLL</a> | <a href="https://pytorch.org/docs/stable/distributed.html#torch.distributed.all_reduce">PyTorch Docs</a> | <a href="https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/distributed/all_reduce.py">NuMPItron</a></p>
+<p><img src="all_reduce.png" class="img-fluid"></p>
+<p>Perform a reduction (<code>op={SUM,MAX,...}</code>) and broadcast to all devices. PyTorch has quite a <a href="https://github.com/pytorch/pytorch/blob/dfc4b608e1c4343ae0a32130b5f2f47acb04fad1/torch/csrc/distributed/c10d/Types.hpp#L36-L46">large amount</a> of reductions available.</p>
+<p>AllReduce can be found in <strong>distributed data parallel</strong>, where you sum the gradients for each weight over devices in the backward pass.</p>
+<p>Allreduce is also found in <a href="https://arxiv.org/abs/1909.08053"><strong>tensor parallel</strong></a>. Here we sum each forward and backward pass of the MLP and Attention layers (and do some reductions in the embedding and loss calculation too, see <a href="https://lweitkamp.github.io/posts/numpitron_tensor_parallel/">my post on tensor parallel</a>).</p>
+<section id="ring-allreduce" class="level2 page-columns page-full" data-number="2.1">
+<h2 data-number="2.1" class="anchored" data-anchor-id="ring-allreduce"><span class="header-section-number">2.1</span> Ring AllReduce</h2>
+<p><a href="https://github.com/horovod/horovod">Horovod</a>, ye old distributed training framework for TensorFlow built by Uber back in the day, was too slow. Specifically, the AllReduce implementation was too slow. Originally, the algorithm implementation performed something like a <a href="#sec-reduce" class="quarto-xref">Reduce - Section&nbsp;7</a> and <a href="#sec-broadcast" class="quarto-xref">Broadcast - Section&nbsp;4</a> operation on the data. A single/root device would collect the data, perform the reduction, and send it to all other devices. The issue is that it creates a bandwidth bottleneck: increase the number of devices and the incoming root will not be able to receive and send data fast enough.</p>
+<p>An engineer working at Baidu Research figured out an improvement based on a technique in high performance computing, a ring message passing scheme (the same one described in the paper above). If you picture the devices in a topological ring, each device receives data from its left neighbour and sends data to its right neighbour. In the figure below<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a> we have three devices and three chunks of data. The improved algorithm starts with a series of <a href="#sec-reducescatter" class="quarto-xref">ReduceScatter - Section&nbsp;8</a> operations where each device sends one of its chunk to its neighbor untill each device has one complete chunk:</p>
+<div class="no-row-height column-margin column-container"><p><sup>1</sup>&nbsp;I’ve adapted and simplified the figure below from the original blog post (<a href="https://andrew.gibiansky.com/blog/machine-learning/baidu-allreduce/">andrew.gibiansky.com</a>).</p></div><p><img src="ring_allreduce_reduce_scatter.png" class="img-fluid"></p>
+<p>With each device having a complete chunk of the data, each device now sends its neighbor the complete chunk it has untill each device has the data in full:</p>
+<p><img src="ring_allreduce_reduce_allgather.png" class="img-fluid"></p>
+<p>This implementation makes scaling distributed data parallel much more efficient, and was probably somewhat of a milestone in distributed training frameworks.</p>
+</section>
+</section>
+<section id="sec-alltoall" class="level1" data-number="3">
+<h1 data-number="3"><span class="header-section-number">3</span> All to All</h1>
+<p><a href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/p2p.html#all-to-all">NCLL</a> | <a href="https://pytorch.org/docs/stable/distributed.html#torch.distributed.all_to_all">PyTorch Docs</a> | <a href="https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/distributed/all_to_all.py">NuMPItron</a></p>
+<p><img src="all_to_all.png" class="img-fluid"></p>
+<p>All to All reminds me of a matrix transposition, we essentially scatter and gather the data based on the device rank.</p>
+<p>It is found in DeepSpeed style sequence parallel called <a href="https://arxiv.org/abs/2309.14509"><strong>Ulysses</strong></a>, but I have not read the paper in depth yet.</p>
+</section>
+<section id="sec-broadcast" class="level1" data-number="4">
+<h1 data-number="4"><span class="header-section-number">4</span> Broadcast</h1>
+<p><a href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html#broadcast">NCLL</a> | <a href="https://pytorch.org/docs/stable/distributed.html#torch.distributed.broadcast">PyTorch Docs</a> | <a href="https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/distributed/broadcast.py">NuMPItron</a></p>
+<p><img src="broadcast.png" class="img-fluid"></p>
+<p>A single device sends data to all other devices. In data parallel you would scatter the data to each device, but in tensor parallel you want each device to work on the same set of data, so you could broadcast the same batch of data to all tensor parallel ranks.</p>
+</section>
+<section id="sec-gather" class="level1" data-number="5">
+<h1 data-number="5"><span class="header-section-number">5</span> Gather</h1>
+<p><a href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html#gather">NCLL</a> | <a href="https://pytorch.org/docs/stable/distributed.html#torch.distributed.gather">PyTorch Docs</a> | <a href="https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/distributed/gather.py">NuMPItron</a></p>
+<p><img src="gather.png" class="img-fluid"></p>
+<p>Gather data from all devices to a single device.</p>
+</section>
+<section id="sec-receive" class="level1" data-number="6">
+<h1 data-number="6"><span class="header-section-number">6</span> Receive / Send</h1>
+<p><a href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/p2p.html#sendrecv">NCLL</a> | <a href="https://pytorch.org/docs/stable/distributed.html#torch.distributed.send">PyTorch Docs</a> | <a href="https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/distributed/send.py">NuMPItron</a></p>
+<p><img src="sendrecv.png" class="img-fluid" style="width:65.0%"></p>
+<p>A device sends or receives data from another rank. In some sense, most of the collective communications are using send / receive.</p>
+<p>In <strong>Pipeline Parallel</strong> each pipeline layer sends a batch of data to the next layer in the forward pass, and sends the gradients in the backwards pass to the previous layer.</p>
+</section>
+<section id="sec-reduce" class="level1" data-number="7">
+<h1 data-number="7"><span class="header-section-number">7</span> Reduce</h1>
+<p><a href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html#reduce">NCLL</a> | <a href="https://pytorch.org/docs/stable/distributed.html#torch.distributed.reduce">PyTorch Docs</a> | <a href="https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/distributed/reduce.py">NuMPItron</a></p>
+<p><img src="reduce.png" class="img-fluid"></p>
+<p>Perform a reduction (<code>op={SUM,MAX,...}</code>) and send to a single device (<code>dst=RANK</code>).</p>
+</section>
+<section id="sec-reducescatter" class="level1" data-number="8">
+<h1 data-number="8"><span class="header-section-number">8</span> ReduceScatter</h1>
+<p><a href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html#reducescatter">NCLL</a> | <a href="https://pytorch.org/docs/stable/distributed.html#torch.distributed.reduce_scatter">PyTorch Docs</a> | <a href="https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/distributed/reduce_scatter.py">NuMPItron</a></p>
+<p><img src="reduce_scatter.png" class="img-fluid"></p>
+<p>ReduceScatter is found in Megatron-LM style <a href="https://arxiv.org/abs/2205.05198"><strong>Sequence Parallel</strong></a>. LayerNorm and Dropout are independent operations on the sequence dim. One option here is to simply add a <a href="#sec-scatter" class="quarto-xref">Scatter - Section&nbsp;9</a> and <a href="#sec-gather" class="quarto-xref">Gather - Section&nbsp;5</a> operations before and after these two layers, but that would mean we have more overhead if combined with tensor parallel (which is the goal). Instead, we can perform a ReduceScatter where we would originally AllReduce for tensor parallel. Where would normally perform the identity operation in tensor parallel, we instead Gather.</p>
+<p>PyTorch <a href="https://arxiv.org/abs/2304.11277"><strong>Fully Sharded Data Parallel</strong></a> used ReduceScatter to sum the gradients in the backwards pass but to ensure that each device only keeps a shard of the gradients. The same can be used in ZeRO.</p>
+</section>
+<section id="sec-scatter" class="level1" data-number="9">
+<h1 data-number="9"><span class="header-section-number">9</span> Scatter</h1>
+<p><a href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/p2p.html?highlight=scatter#one-to-all-scatter">NCLL</a> | <a href="https://pytorch.org/docs/stable/distributed.html#torch.distributed.scatter">PyTorch Docs</a> | <a href="https://github.com/lweitkamp/numpitron/blob/main/src/numpitron/distributed/scatter.py">NuMPItron</a></p>
+<p><img src="scatter.png" class="img-fluid"></p>
+<p>Also known as one-to-all, an operation that shards the data block on a chosen device evenly amongst all other devices in the same group.</p>
+<p>Scatter is used in <a href="https://arxiv.org/abs/1909.08053"><strong>tensor parallel</strong></a> to initially shard the weights of the embedding, MLP, and attention weights across devices.</p>
+<p>Scatter is also used in <strong>data parallel</strong> when we have to shard the batch across devices.</p>
 
+
+</section>
 
 
 </main> <!-- /main -->

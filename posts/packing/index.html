@@ -220,7 +220,7 @@ ul.task-list li input[type="checkbox"] {
 <figcaption>A packed attention mask.</figcaption>
 </figure>
 </div>
-<p>This might be the most intrusive part to the codebase - it will require actually calculating a distinct attention mask per batch where we otherwise can simply have the standard diagonal created once for the whole batch. I imagine implementing this efficiently for ALiBi is not an enjoyable assignment.</p>
+<p>This might be the most intrusive part to the codebase - it will require actually calculating a distinct attention mask per batch where we otherwise can simply have the standard diagonal created once for the whole batch. This is probably the deal-breaker for most codebases, since you need to implement it effectively otherwise flash attention will not work, you increase mask memory consumption, etc.</p>
 </section>
 <section id="thats-it" class="level3">
 <h3 class="anchored" data-anchor-id="thats-it">That’s it!</h3>

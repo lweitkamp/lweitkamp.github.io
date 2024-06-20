@@ -3,7 +3,8 @@
     "listing": "/index.html",
     "items": [
       "/posts/packing/index.html",
-      "/posts/numpitron_tensor_parallel/index.html"
+      "/posts/numpitron_tensor_parallel/index.html",
+      "/posts/collective_communications/index.html"
     ]
   }
 ]
