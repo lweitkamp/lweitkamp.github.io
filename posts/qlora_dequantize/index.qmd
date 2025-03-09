@@ -23,7 +23,7 @@ I thought it would be a fun challenge on a technical level to go beyond tutorial
 In this post[^1], I'll walk through the process of converting CUDA code to Triton and share how I achieved performance improvements of up to 1.6X to 1.8X for LLaMA models ranging from 6B to 65B parameters.
 Notably, the speed gains from my implementation increase as model size scales up, making this approach particularly valuable for larger models — which is basically the intended use for QLoRA.
 
-[^1]: Code can be found [on GitHub](https://github.com/lweitkamp/nf4_triton) which has all Triton kernels implemented and a benchmark notebook.
+[^1]: Code can be found [on GitHub](https://github.com/lweitkamp/qlora_dequantize_triton) which has all Triton kernels implemented and a benchmark notebook.
 
 We start with discussing what QLoRA is and move on to the CUDA kernels that are typically launched by `bitsandybtes`, the library used for NF4 quantization in Unsloth and PEFT.
 From there, we mimic the CUDA kernels in Triton and benchmark its performance.
