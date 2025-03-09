@@ -2,7 +2,6 @@ project:
   type: website
 
 website:
-  # title: "website"
   search: false
   navbar:
     left:
@@ -14,9 +13,14 @@ website:
         href: https://twitter.com/laurensweitkamp
 format:
   html:
-    linkcolor: "#FF5733"
-    theme: litera  # litera sandstone
-    css: styles.css
+      grid: 
+        margin-width: 350p
+      highlight-style: nord
+  # html:
+    # linkcolor: "#FF5733"
+    # theme: litera  # litera sandstone
+    # css: styles.css
+    # highlight-style: pygments
 
 execute:
   freeze: auto
