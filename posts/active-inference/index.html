@@ -7,9 +7,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 <meta name="author" content="Laurens Weitkamp">
-<meta name="dcterms.date" content="2024-10-01">
+<meta name="dcterms.date" content="2024-07-03">
 
-<title>Packing Data for efficient Training and Inference</title>
+<title>Notes on Active Inference</title>
 <style>
 code{white-space: pre-wrap;}
 span.smallcaps{font-variant: small-caps;}
@@ -53,7 +53,37 @@ ul.task-list li input[type="checkbox"] {
   }
 }</script>
 
+  <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
 
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN") {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+<link rel="stylesheet" href="../../styles.css">
 </head>
 
 <body class="floating nav-fixed slimcontent">
@@ -94,7 +124,7 @@ ul.task-list li input[type="checkbox"] {
 <header id="title-block-header" class="quarto-title-block default toc-left page-columns page-full">
   <div class="quarto-title-banner page-columns page-full">
     <div class="quarto-title column-body">
-      <h1 class="title">Packing Data for efficient Training and Inference</h1>
+      <h1 class="title">Notes on Active Inference</h1>
                       </div>
   </div>
     
@@ -111,7 +141,7 @@ ul.task-list li input[type="checkbox"] {
       <div>
       <div class="quarto-title-meta-heading">Published</div>
       <div class="quarto-title-meta-contents">
-        <p class="date">October 1, 2024</p>
+        <p class="date">July 3, 2024</p>
       </div>
     </div>
     
@@ -122,21 +152,20 @@ ul.task-list li input[type="checkbox"] {
   </header><div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
 <!-- sidebar -->
   <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto">
-    <nav id="TOC" role="doc-toc" class="toc-active">
+    <nav id="TOC" role="doc-toc" class="toc-active" data-toc-expanded="99">
     <h2 id="toc-title">On this page</h2>
    
   <ul>
-  <li><a href="#packing" id="toc-packing" class="nav-link active" data-scroll-target="#packing">Packing</a>
+  <li><a href="#the-bayesian-brain" id="toc-the-bayesian-brain" class="nav-link active" data-scroll-target="#the-bayesian-brain">The Bayesian Brain</a></li>
+  <li><a href="#active-inference" id="toc-active-inference" class="nav-link" data-scroll-target="#active-inference">Active Inference</a></li>
+  <li><a href="#past-present-variational-free-energy" id="toc-past-present-variational-free-energy" class="nav-link" data-scroll-target="#past-present-variational-free-energy">Past &amp; Present: Variational Free Energy</a>
   <ul class="collapse">
-  <li><a href="#literature-review" id="toc-literature-review" class="nav-link" data-scroll-target="#literature-review">Literature Review</a></li>
-  <li><a href="#dealing-with-cross-contamination" id="toc-dealing-with-cross-contamination" class="nav-link" data-scroll-target="#dealing-with-cross-contamination">Dealing with Cross Contamination</a>
-  <ul class="collapse">
-  <li><a href="#update-positional-information" id="toc-update-positional-information" class="nav-link" data-scroll-target="#update-positional-information">Update Positional Information</a></li>
-  <li><a href="#update-the-attention-mask" id="toc-update-the-attention-mask" class="nav-link" data-scroll-target="#update-the-attention-mask">Update the Attention Mask</a></li>
-  <li><a href="#thats-it" id="toc-thats-it" class="nav-link" data-scroll-target="#thats-it">That’s it!</a></li>
+  <li><a href="#the-maximum-entropy-principle" id="toc-the-maximum-entropy-principle" class="nav-link" data-scroll-target="#the-maximum-entropy-principle">The Maximum Entropy Principle</a></li>
+  <li><a href="#the-minimum-discription-length" id="toc-the-minimum-discription-length" class="nav-link" data-scroll-target="#the-minimum-discription-length">The Minimum Discription Length</a></li>
+  <li><a href="#minimizing-divergence-maximizing-evidence" id="toc-minimizing-divergence-maximizing-evidence" class="nav-link" data-scroll-target="#minimizing-divergence-maximizing-evidence">Minimizing Divergence, Maximizing Evidence</a></li>
   </ul></li>
-  <li><a href="#can-we-ignore-cross-contamination" id="toc-can-we-ignore-cross-contamination" class="nav-link" data-scroll-target="#can-we-ignore-cross-contamination">Can we Ignore Cross Contamination?</a></li>
-  </ul></li>
+  <li><a href="#future-expected-free-energy" id="toc-future-expected-free-energy" class="nav-link" data-scroll-target="#future-expected-free-energy">Future: Expected Free Energy</a></li>
+  <li><a href="#sec-ref" id="toc-sec-ref" class="nav-link" data-scroll-target="#sec-ref">References</a></li>
   </ul>
 </nav>
 </nav>
@@ -151,90 +180,161 @@ ul.task-list li input[type="checkbox"] {
 
 
 
-<p>The context length of transformer models is rapidly increasing with each new generation of frontier models. For instance, Google’s latest Gemini 1.5 model can process up to 1 million tokens, equivalent to 1 hour of video or approximately 700,000 words. This increase is driven by advancements in hardware and the development of more efficient algorithms tailored to the specific demands of long-context training<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>.</p>
-<div class="no-row-height column-margin column-container"><p><sup>1</sup>&nbsp;An orthogonal approach involves training with a short context but performing inference on a long context. Packing techniques can still be beneficial during inference.</p></div><p>Long contexts introduce several challenges: identifying data that inherently requires long contexts (such as books, podcasts, and videos) and efficiently handling smaller context data. Simply concatenating these documents and feeding them into an autoregressive transformer can lead to <em>cross-contamination</em> of sequences. For instance, predicting a sequence <code>S2</code> from an unrelated sequence <code>S1</code> becomes nearly impossible if there is a significant difference in their subject matter.</p>
-<p>The same issue arises during inference. If we dynamically batch tokens from different users, efficiency can be improved by grouping shorter conversations in the same batch. The solution to both of these issues is a technique called <em>packing</em>.</p>
-<section id="packing" class="level1 page-columns page-full">
-<h1>Packing</h1>
-<p>Packing sequences is a technique used in transformer models during training and inference to optimize the use of context length and reduce padding.</p>
-<p>Consider a transformer model with a context length denoted as <code>ctx</code>. Let’s take two sequences, <code>S1</code> and <code>S2</code>, with lengths <code>n</code> and <code>m</code> respectively, where <code>n + m &lt;= ctx</code>. If we treat these sequences separately, the total padding required would be <code>ctx - n + ctx - m</code> tokens. However, by packing these sequences together into a single context, we can significantly reduce the padding to only <code>ctx - n - m</code> tokens.</p>
-<p>The figure below illustrates the concept of packing two sequences.</p>
+<p>I’ve been on a bit of a binge by reading <a href="https://academic.oup.com/book/7843">Surfing Uncertainty</a><a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>, <a href="https://www.abriefhistoryofintelligence.com/">A Brief History of Intelligence</a> (BHI), and <a href="https://direct.mit.edu/books/oa-monograph/5299/Active-InferenceThe-Free-Energy-Principle-in-Mind">Active Inference</a> and I wanted to write down most of what I’ve learned, and they all relate to the theory of active inference (and Karl Friston). These are my notes from reading the books, but also from listening to-and barely understanding-a couple of podcasts from Machine Learning Street Talk<a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a>.</p>
+<div class="no-row-height column-margin column-container"><p><sup>1</sup>&nbsp;Scott Alexander has a decent <a href="https://slatestarcodex.com/2017/09/05/book-review-surfing-uncertainty/">review</a> of Surfing Uncertainty.</p><p><sup>2</sup>&nbsp;For a full list of references, see <a href="#sec-ref" class="quarto-xref">Section&nbsp;5</a></p></div><p>I’m primarily interested in the relationship active inference has with reinforcement learning and planning, so a lot of focus will be spent on the expected free energy. But before any of that, we have to talk about predictive processing and the bayesian brain as a warming up.</p>
+<section id="the-bayesian-brain" class="level1 page-columns page-full">
+<h1>The Bayesian Brain</h1>
+<div>
+
+</div>
+<div class="quarto-layout-panel" data-layout-ncol="2">
+<div class="quarto-layout-row">
+<div class="quarto-layout-cell" style="flex-basis: 50.0%;justify-content: flex-start;">
 <div class="quarto-figure quarto-figure-center">
 <figure class="figure">
-<p><img src="packed_sequences.png" class="img-fluid figure-img"></p>
-<figcaption>Two sequences “packed”.</figcaption>
+<p><img src="inpainting.png" class="img-fluid figure-img" style="width:55.0%"></p>
+<figcaption>Inpainting: Perceptions ‘fills in’ the triangle.</figcaption>
 </figure>
 </div>
-<section id="literature-review" class="level2 page-columns page-full">
-<h2 class="anchored" data-anchor-id="literature-review">Literature Review</h2>
-<p>Packing is briefly described in most papers on language modelling (in fact, most authors cite T5 for it), here are some from the literature:</p>
+</div>
+<div class="quarto-layout-cell" style="flex-basis: 50.0%;justify-content: flex-start;">
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="one_at_a_time.png" class="img-fluid figure-img" style="width:70.0%"></p>
+<figcaption>One at a Time: you can perceive either a duck or a rabbit, but not both at the same time.</figcaption>
+</figure>
+</div>
+</div>
+</div>
+</div>
+<p>19th century physician and physicist Herman (von) Helmholtz had a theory that could explain why such phenomena occur. Helmholtz was interested in perception, and in his work <a href="https://www.nature.com/articles/118074a0"><strong><em>Treatise on Physiological Optics</em></strong></a> we can figure out what his theory was<a href="#fn3" class="footnote-ref" id="fnref3" role="doc-noteref"><sup>3</sup></a>:</p>
+<div class="no-row-height column-margin column-container"><p><sup>3</sup>&nbsp;Taken from <a href="https://journals.sagepub.com/doi/10.1068/p5973">Was Helmholtz a Bayesian?</a></p></div><blockquote class="blockquote">
+<p>“The distinction between thought and reality is possible only when we know how to distinguish between what the ‘I’ can change and what the ‘I’ cannot change. […] What we then attain is knowledge of the lawful order in the realm of the real, but only in so far as it is represented in the tokens within the system of sensory.”</p>
+</blockquote>
+<p>You don’t perceive what is actually happening, you perceive what your brain <strong>thinks</strong> is there. Your brain ‘fills in’ the triangle as a suggestion of what could possibly be there. Your brain ‘sees’ either a duck or a rabbit because it picks a single reality to simulate (it’s all just a simulation).</p>
+<p>Putting it a bit more (but not too) formal, the universe emits a state <span class="math inline">\(\mathbf{x}^*\)</span> but we only have access to a noisy and incomplete sensory experience of the state as observation <span class="math inline">\(\mathbf{y}\)</span>. We are constantly predicting <span class="math inline">\(\mathbf{y}\)</span> (simulating), and in doing so, we are building and strengthening our own internal model <span class="math inline">\(\mathbf{x}\)</span> that might approximate the true world model<a href="#fn4" class="footnote-ref" id="fnref4" role="doc-noteref"><sup>4</sup></a>.</p>
+<div class="no-row-height column-margin column-container"><p><sup>4</sup>&nbsp;The universe emits a state but access is mediated by our senses <img src="helmholtz.png" class="img-fluid"></p><p><sup>5</sup>&nbsp;The paper <a href="https://www.sciencedirect.com/science/article/abs/pii/S0166223604003352">The Bayesian brain</a> is probably the most notable candidate for coining the term, but the paper actually never mentions the Bayesian Brain beyond the title.</p></div><p>Helmholtz’s ideas about the bayesian brain did not garner much attention in his time. He also didn’t coin the term Bayesian Brain - he didn’t even mention Bayes! In fact, I don’t really know who did coin the term. I asked Claude (Sonnet 3.5) and got a perfect answer: <em>“It’s likely that the term emerged organically as these ideas gained popularity in the neuroscience community.”</em>, which seems to be the most likely case<a href="#fn5" class="footnote-ref" id="fnref5" role="doc-noteref"><sup>5</sup></a>.</p>
+<p>If you want to go a bit deeper do read Karl Friston’s <a href="https://www.sciencedirect.com/science/article/pii/S1053811911011657">The history of the future of the Bayesian brain</a>, it has a lot of nice anecdotes about Hinton too. A key takeaway from it is that the hypothesis is only a <em>description</em> of optimal behavior, it does not prescribe how decison making emerges.</p>
+<p>Predictive processing somewhat builds on the idea of the Bayesian Brain, by focusing on a hierarchical probabilistic models where prediction error is central. When the brain has a mismatch between prediction and sensory input, the brain either updates its model or seeks additional information to resolve the discrepancy:</p>
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="bayesian_brain.png" class="img-fluid figure-img"></p>
+<figcaption>The Bayesian Brain actively predicts incoming sensory observations. If there is a discrepancy between the brain and the world, a belief update happens in the brain.</figcaption>
+</figure>
+</div>
+<p>From this point on many roads are possible that leave from the Bayesian Brain or Predictive Processing theories. Active Inference is one of these roads, and it adds a way to resolve predictive discrepancies.</p>
+</section>
+<section id="active-inference" class="level1">
+<h1>Active Inference</h1>
+<p>Agents are actively trying to minimize surprise. The model plays one part here, the data the other part. We can change the way the data is generated, rendering action as a complementary part to perception in inference.</p>
+<blockquote class="blockquote">
+<p>exact Bayesian inference supporting perception and action is computationally intractable in most cases, because two quantities—the model evidence (<span class="math inline">\(P(y)\)</span>) and the posterior probability (<span class="math inline">\(P(x \, | \, y)\)</span>)—cannot be computed for two possible reasons</p>
+</blockquote>
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="active_inference.png" class="img-fluid figure-img"></p>
+<figcaption>Under Active Inference, perception and action are <strong>both</strong> used to realize a single objective: minimizing surprise and uncertainty.</figcaption>
+</figure>
+</div>
+<p>To realize active inference, our generative models have to account for two notions of free energy. The first is variational free energy, and is concerned with past and present observations. The second is expected free energy, and it is concerned with planning and looking ahead into the future.</p>
+</section>
+<section id="past-present-variational-free-energy" class="level1">
+<h1>Past &amp; Present: Variational Free Energy</h1>
+<p><span class="math display">\[
+\begin{align}
+F[Q, y]
+:&amp;= \text{Variational Free Energy} \\
+&amp;= \underbrace{- \mathbb{E}_{Q(x)}[\ln P(y, x)]}_{\textit{Energy}} - \underbrace{H[Q(x)]}_{\textit{Entropy}} \\
+&amp;= \underbrace{D_\text{KL}[Q(x) \, \| \, P(x)]}_{\textit{Complexity}} - \underbrace{\mathbb{E}_Q(x)[\ln P(y \, | \, x)]}_{\textit{Accuracy}} \\
+&amp;= \underbrace{D_\text{KL}[Q(x) \, \| \, P(x \, | \, y)]}_{\textit{Divergence}} - \underbrace{\ln P(y)}_{\textit{Evidence}}
+\end{align}
+\]</span></p>
+<p>We will see how three different views on the variational free energy can give us insight into what we are trying to learn in active inference.</p>
+<section id="the-maximum-entropy-principle" class="level2">
+<h2 class="anchored" data-anchor-id="the-maximum-entropy-principle">The Maximum Entropy Principle</h2>
+<p><span class="math display">\[
+F[Q, y] = \underbrace{- \mathbb{E}_{Q(x)}[\ln P(y, x)]}_{\textit{Energy}}
+- \underbrace{H[Q(x)]}_{\textit{Entropy}}
+\]</span></p>
+<p>The first line of equation 2.5 shows that minimizing with respect to Q requires consistency with the generative model (energy) while also maintaining a high posterior entropy.</p>
+<p>The latter means that, in the absence of data or precise prior beliefs (which only influence the energy term), we should adopt maximally uncertain beliefs about the hidden states of the world. This is in line the the maximum entropy principle:</p>
+</section>
+<section id="the-minimum-discription-length" class="level2">
+<h2 class="anchored" data-anchor-id="the-minimum-discription-length">The Minimum Discription Length</h2>
+<p><span class="math display">\[
+F[Q, y] = \underbrace{D_\text{KL}[Q(x) \, \| \, P(x)]}_{\textit{Complexity}} - \underbrace{\mathbb{E}_Q(x)[\ln P(y \, | \, x)]}_{\textit{Accuracy}}
+\]</span></p>
+<p>The second line emphasizes the interpretation of free energy minimization as finding the best explanation for sensory data, which must be the simplest (minimally complex) explanation that is able to accurately account for the data (cf.&nbsp;Occam’s razor). On this view, the complexity cost is just Bayesian surprise. In other words, the degree to which “I change my mind” is quantified by the divergence between the prior and the posterior. This means every accurate explanation for my sensations incurs a complexity cost, and this cost scores the degree of Bayesian belief updating. Variational free energy, then, scores the difference between accuracy and complexity.</p>
+</section>
+<section id="minimizing-divergence-maximizing-evidence" class="level2">
+<h2 class="anchored" data-anchor-id="minimizing-divergence-maximizing-evidence">Minimizing Divergence, Maximizing Evidence</h2>
+<p><span class="math display">\[
+F[Q, y] = \underbrace{D_\text{KL}[Q(x) \, \| \, P(x \, | \, y)]}_{\textit{Divergence}} - \underbrace{\ln P(y)}_{\textit{Evidence}}
+\]</span></p>
+<p>The final line expresses the free energy as a bound on negative log evidence (see figure 2.4). As the left part of the figure illustrates, the free energy is an upper bound on negative log evidence, where the bound is the divergence between Q and the posterior probability that would have been obtained were it possible to perform exact (as opposed to variational) infer</p>
+</section>
+</section>
+<section id="future-expected-free-energy" class="level1">
+<h1>Future: Expected Free Energy</h1>
+</section>
+<section id="sec-ref" class="level1">
+<h1>References</h1>
 <table class="table">
 <thead>
 <tr class="header">
-<th>Paper</th>
-<th>Quote</th>
+<th>Type</th>
+<th>Date</th>
+<th>Name</th>
+<th>Link</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td>RoBERTa<a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a></td>
-<td><em>“Each input is <strong><em>packed</em></strong> with full sentences sampled contiguously from one or more documents, such that the total length is at most 512 tokens.”</em></td>
+<td>MLSS</td>
+<td>Sep 5 2023</td>
+<td>Autopoietic Enactivism and the Free Energy Principle</td>
+<td><a href="https://www.youtube.com/watch?v=bL00-jtRrMA">https://www.youtube.com/watch?v=bL00-jtRrMA</a></td>
 </tr>
 <tr class="even">
-<td>GPT-3<a href="#fn3" class="footnote-ref" id="fnref3" role="doc-noteref"><sup>3</sup></a></td>
-<td><em>“During training we always train on sequences of the full nctx = 2048 token context window, <strong><em>packing</em></strong> multiple documents into a single sequence when documents are shorter than 2048, in order to increase computational efficiency.”</em></td>
+<td>MLSS</td>
+<td>Mar 2 2022</td>
+<td>Prof.&nbsp;KARL FRISTON 2.0 [Unplugged]</td>
+<td><a href="https://www.youtube.com/watch?v=xKQ-F2-o8uM">https://www.youtube.com/watch?v=xKQ-F2-o8uM</a></td>
 </tr>
 <tr class="odd">
-<td>T5<a href="#fn4" class="footnote-ref" id="fnref4" role="doc-noteref"><sup>4</sup></a></td>
-<td><em>“Whenever possible, we “<strong><em>pack</em></strong>” multiple sequences into each entry of the batch so that our batches contain roughly 216 = 65,536 tokens.”</em></td>
+<td>MLSS</td>
+<td>Dec 13 2020</td>
+<td>Karl Friston - The Free Energy Principle</td>
+<td><a href="https://www.youtube.com/watch?v=KkR24ieh5Ow">https://www.youtube.com/watch?v=KkR24ieh5Ow</a></td>
 </tr>
 <tr class="even">
-<td>T0<a href="#fn5" class="footnote-ref" id="fnref5" role="doc-noteref"><sup>5</sup></a></td>
-<td><em>“we use <strong><em>packing</em></strong> to combine multiple training examples into a single sequence to reach the maximum sequence length.”</em></td>
+<td>MLSS</td>
+<td>Mar 11 2023</td>
+<td>KARL FRISTON - INTELLIGENCE 3.0</td>
+<td><a href="https://www.youtube.com/watch?v=V_VXOdf1NMw">https://www.youtube.com/watch?v=V_VXOdf1NMw</a></td>
+</tr>
+<tr class="odd">
+<td>MLSS</td>
+<td>May 2 2024</td>
+<td>Dr.&nbsp;THOMAS PARR - Active Inference</td>
+<td><a href="https://www.youtube.com/watch?v=bk_xCikDUDQ">https://www.youtube.com/watch?v=bk_xCikDUDQ</a></td>
+</tr>
+<tr class="even">
+<td>Book</td>
+<td>Mar 29 2022</td>
+<td>Active Inference (open access)</td>
+<td><a href="https://mitpress.mit.edu/9780262045353/active-inference/">https://mitpress.mit.edu/9780262045353/active-inference/</a></td>
+</tr>
+<tr class="odd">
+<td>Article</td>
+<td>Feb 6 2023</td>
+<td>How Our Reality May Be a Sum of All Possible Realities</td>
+<td><a href="https://www.quantamagazine.org/how-our-reality-may-be-a-sum-of-all-possible-realities-20230206/">https://www.quantamagazine.org/how-our-reality-may-be-a-sum-of-all-possible-realities-20230206/</a></td>
 </tr>
 </tbody>
 </table>
-<div class="no-row-height column-margin column-container"><p><sup>2</sup>&nbsp;<a href="https://arxiv.org/abs/1907.11692">RoBERTa: A Robustly Optimized BERT Pretraining Approach</a></p><p><sup>3</sup>&nbsp;<a href="https://arxiv.org/abs/2005.14165">Language Models are Few-Shot Learners</a></p><p><sup>4</sup>&nbsp;<a href="https://arxiv.org/abs/1910.10683">Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer</a></p><p><sup>5</sup>&nbsp;<a href="https://arxiv.org/abs/2107.02027">Efficient Sequence Packing without Cross-contamination</a></p><p><sup>6</sup>&nbsp;<a href="https://arxiv.org/abs/2107.02027">Efficient Sequence Packing without Cross-contamination</a></p></div><p>Some approaches use the packing described above naively and add an <code>end-of-document</code> token after the sequence is done to let the model figure out the difference between samples. This <em>does</em> seem to hurt performance due to cross-contamination mentioned before, but it might not have as big of an impact at scale<a href="#fn6" class="footnote-ref" id="fnref6" role="doc-noteref"><sup>6</sup></a>.</p>
-</section>
-<section id="dealing-with-cross-contamination" class="level2">
-<h2 class="anchored" data-anchor-id="dealing-with-cross-contamination">Dealing with Cross Contamination</h2>
-<p>To prevent cross-contamination when packing sequences, it is crucial to update both the positional information and the attention masks, not just concatenating the sequences. This ensures that the attention mechanism is still valid.</p>
-<section id="update-positional-information" class="level3">
-<h3 class="anchored" data-anchor-id="update-positional-information">Update Positional Information</h3>
-<p>When using absolute positional encodings (or ALiBi, or absolute encodings), we need to reset the positional encoding index at the start of each new sample within the packed sequence. This reset ensures that each sequence retains its positional context, which is essential for the model’s accuracy.</p>
-<div class="quarto-figure quarto-figure-center">
-<figure class="figure">
-<p><img src="packed_positional_encoding.png" class="img-fluid figure-img"></p>
-<figcaption>Packed positional encodings.</figcaption>
-</figure>
-</div>
-<p>For RoPE, you would have to do a similar rest.</p>
-</section>
-<section id="update-the-attention-mask" class="level3">
-<h3 class="anchored" data-anchor-id="update-the-attention-mask">Update the Attention Mask</h3>
-<p>In self-attention mechanisms, it is necessary to ensure that one sequence cannot attend to another within the same packed context. This requires merging autoregressive masks for the self-attention layer, enforcing the restriction effectively:</p>
-<div class="quarto-figure quarto-figure-center">
-<figure class="figure">
-<p><img src="packed_attention_mask.png" class="img-fluid figure-img"></p>
-<figcaption>A packed attention mask.</figcaption>
-</figure>
-</div>
-<p>This might be the most intrusive part to the codebase - it will require actually calculating a distinct attention mask per batch where we otherwise can simply have the standard diagonal created once for the whole batch. This is probably the deal-breaker for most codebases, since you need to implement it effectively otherwise flash attention will not work, you increase mask memory consumption, etc.</p>
-</section>
-<section id="thats-it" class="level3">
-<h3 class="anchored" data-anchor-id="thats-it">That’s it!</h3>
-<p>Properly implementing these updates ensures that the model’s gradient step remains consistent, regardless of whether sequences are processed individually or packed.</p>
-<p>It’s worth your time looking at figures <a href="https://arxiv.org/pdf/2107.02027.pdf#page=7">3</a> and <a href="https://arxiv.org/pdf/2107.02027.pdf#page=8">4</a>, it’s from a paper that introduces the concept of cross-contamination. The paper additionally explains the performance of packing and the effect of ‘proper’ masking, it’s a great read!</p>
-<p>Another paper that discusses masked packing but during inference time that goes in depth on the effect of packing on prefilling and the time to first token is <a href="https://arxiv.org/abs/2404.09529">Prepacking</a>.</p>
-</section>
-</section>
-<section id="can-we-ignore-cross-contamination" class="level2 page-columns page-full">
-<h2 class="anchored" data-anchor-id="can-we-ignore-cross-contamination">Can we Ignore Cross Contamination?</h2>
-<p>From personal experience, there is little support for packing in public codebases, often justified by the assumption that the data is not too correlated. That could be true, but it is a strong assumption to make. Interestingly, the approach in <a href="https://arxiv.org/abs/2312.17296">Structured Packing in LLM Training Improves Long Context Utilization</a> essentially ignores proper masking to <strong>benefit</strong> long-context learning. However, the models are small scale and the data is not inherently long context.</p>
-<p>Given that t5x does have a proper packing implementation<a href="#fn7" class="footnote-ref" id="fnref7" role="doc-noteref"><sup>7</sup></a>, I would bet that Google did some internal checks to see if it helps or not. You can choose to ignore it, but you probably don’t want to risk it at the frontier level where your infra is optimized anyway.</p>
 
 
-<div class="no-row-height column-margin column-container"><p><sup>7</sup>&nbsp;They call it <em>segmented data</em> - <a href="https://github.com/google-research/t5x/blob/df5da64315dd8ee269626f66bf60eb8f12a37124/t5x/examples/t5/network.py#L310-L317">from the T5x codebase</a>.</p></div></section>
 </section>
 
 

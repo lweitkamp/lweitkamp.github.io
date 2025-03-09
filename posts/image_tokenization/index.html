@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 <meta name="author" content="Laurens Weitkamp">
-<meta name="dcterms.date" content="2024-06-18">
+<meta name="dcterms.date" content="2024-06-21">
 
 <title>Image Tokenization</title>
 <style>
@@ -141,7 +141,7 @@ window.Quarto = {
       <div>
       <div class="quarto-title-meta-heading">Published</div>
       <div class="quarto-title-meta-contents">
-        <p class="date">June 18, 2024</p>
+        <p class="date">June 21, 2024</p>
       </div>
     </div>
     
@@ -156,7 +156,7 @@ window.Quarto = {
     <h2 id="toc-title">On this page</h2>
    
   <ul>
-  <li><a href="#taming-transformers" id="toc-taming-transformers" class="nav-link active" data-scroll-target="#taming-transformers">Taming Transformers</a></li>
+  <li><a href="#vector-quantization-the-best-we-can-do-so-far" id="toc-vector-quantization-the-best-we-can-do-so-far" class="nav-link active" data-scroll-target="#vector-quantization-the-best-we-can-do-so-far">Vector Quantization: the best we can do (so far)</a></li>
   <li><a href="#on-the-issue-of-compressability" id="toc-on-the-issue-of-compressability" class="nav-link" data-scroll-target="#on-the-issue-of-compressability">On the Issue of Compressability</a></li>
   </ul>
 </nav>
@@ -174,8 +174,8 @@ window.Quarto = {
 
 <p>Meta recently released Chameleon, an early-fusion multimodal model both ingesting and producing text and image tokens. Early-fusion is only possible by having a discrete representation of both text and images<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>. Text is easy, we can use a byte-pair encoder to chunk up text and get both byte level characters as subwords in discrete form.</p>
 <div class="no-row-height column-margin column-container"><p><sup>1</sup>&nbsp;define early fusion better</p></div><p>How do we get a discrete representation of images? One approach is called <em>image tokenization</em>, and it is gaining a lot of traction recently. In this post we will be discussing a series of papers released since 2021 on image tokenization and how image tokenization is incorporated into multimodal models such as PaliGemma, ….</p>
-<section id="taming-transformers" class="level1 page-columns page-full">
-<h1>Taming Transformers</h1>
+<section id="vector-quantization-the-best-we-can-do-so-far" class="level1 page-columns page-full">
+<h1>Vector Quantization: the best we can do (so far)</h1>
 <p>We will be focusing only on the vector-quantized variational autoencoder (VQ-VAE) and its Generative Adversarial network (VQ-GAN) extension for image tokenization. As far as I’ve seen, these are the only approaches that seem to work in practice. In this framework, we have a <em>codebook</em> of fixed size, with <span class="math inline">\(K\)</span> entries each of size <span class="math inline">\(D\)</span><a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a>.</p>
 <div class="no-row-height column-margin column-container"><div class="quarto-figure quarto-figure-center"><sup>2</sup>&nbsp;
 <figure class="figure">

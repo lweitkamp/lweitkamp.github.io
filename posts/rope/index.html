@@ -7,9 +7,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 <meta name="author" content="Laurens Weitkamp">
-<meta name="dcterms.date" content="2024-10-01">
+<meta name="dcterms.date" content="2024-01-25">
 
-<title>Packing Data for efficient Training and Inference</title>
+<title>Rotary Positional Embeddings</title>
 <style>
 code{white-space: pre-wrap;}
 span.smallcaps{font-variant: small-caps;}
@@ -53,7 +53,37 @@ ul.task-list li input[type="checkbox"] {
   }
 }</script>
 
+  <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
 
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN") {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+<link rel="stylesheet" href="../../styles.css">
 </head>
 
 <body class="floating nav-fixed slimcontent">
@@ -94,7 +124,7 @@ ul.task-list li input[type="checkbox"] {
 <header id="title-block-header" class="quarto-title-block default toc-left page-columns page-full">
   <div class="quarto-title-banner page-columns page-full">
     <div class="quarto-title column-body">
-      <h1 class="title">Packing Data for efficient Training and Inference</h1>
+      <h1 class="title">Rotary Positional Embeddings</h1>
                       </div>
   </div>
     
@@ -111,7 +141,7 @@ ul.task-list li input[type="checkbox"] {
       <div>
       <div class="quarto-title-meta-heading">Published</div>
       <div class="quarto-title-meta-contents">
-        <p class="date">October 1, 2024</p>
+        <p class="date">January 25, 2024</p>
       </div>
     </div>
     
@@ -122,20 +152,17 @@ ul.task-list li input[type="checkbox"] {
   </header><div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
 <!-- sidebar -->
   <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto">
-    <nav id="TOC" role="doc-toc" class="toc-active">
+    <nav id="TOC" role="doc-toc" class="toc-active" data-toc-expanded="99">
     <h2 id="toc-title">On this page</h2>
    
   <ul>
-  <li><a href="#packing" id="toc-packing" class="nav-link active" data-scroll-target="#packing">Packing</a>
+  <li><a href="#a-simple-rotation" id="toc-a-simple-rotation" class="nav-link active" data-scroll-target="#a-simple-rotation"><span class="header-section-number">1</span> A Simple Rotation</a></li>
+  <li><a href="#frequency-and-token-rotation" id="toc-frequency-and-token-rotation" class="nav-link" data-scroll-target="#frequency-and-token-rotation"><span class="header-section-number">2</span> Frequency and Token Rotation</a></li>
+  <li><a href="#decaying-effect-of-rope" id="toc-decaying-effect-of-rope" class="nav-link" data-scroll-target="#decaying-effect-of-rope"><span class="header-section-number">3</span> Decaying Effect of RoPE</a></li>
+  <li><a href="#improvements" id="toc-improvements" class="nav-link" data-scroll-target="#improvements"><span class="header-section-number">4</span> Improvements</a>
   <ul class="collapse">
-  <li><a href="#literature-review" id="toc-literature-review" class="nav-link" data-scroll-target="#literature-review">Literature Review</a></li>
-  <li><a href="#dealing-with-cross-contamination" id="toc-dealing-with-cross-contamination" class="nav-link" data-scroll-target="#dealing-with-cross-contamination">Dealing with Cross Contamination</a>
-  <ul class="collapse">
-  <li><a href="#update-positional-information" id="toc-update-positional-information" class="nav-link" data-scroll-target="#update-positional-information">Update Positional Information</a></li>
-  <li><a href="#update-the-attention-mask" id="toc-update-the-attention-mask" class="nav-link" data-scroll-target="#update-the-attention-mask">Update the Attention Mask</a></li>
-  <li><a href="#thats-it" id="toc-thats-it" class="nav-link" data-scroll-target="#thats-it">That’s it!</a></li>
-  </ul></li>
-  <li><a href="#can-we-ignore-cross-contamination" id="toc-can-we-ignore-cross-contamination" class="nav-link" data-scroll-target="#can-we-ignore-cross-contamination">Can we Ignore Cross Contamination?</a></li>
+  <li><a href="#context-length" id="toc-context-length" class="nav-link" data-scroll-target="#context-length"><span class="header-section-number">4.1</span> Context Length</a></li>
+  <li><a href="#truncating-the-base-wavelength" id="toc-truncating-the-base-wavelength" class="nav-link" data-scroll-target="#truncating-the-base-wavelength"><span class="header-section-number">4.2</span> Truncating the Base Wavelength</a></li>
   </ul></li>
   </ul>
 </nav>
@@ -151,90 +178,113 @@ ul.task-list li input[type="checkbox"] {
 
 
 
-<p>The context length of transformer models is rapidly increasing with each new generation of frontier models. For instance, Google’s latest Gemini 1.5 model can process up to 1 million tokens, equivalent to 1 hour of video or approximately 700,000 words. This increase is driven by advancements in hardware and the development of more efficient algorithms tailored to the specific demands of long-context training<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>.</p>
-<div class="no-row-height column-margin column-container"><p><sup>1</sup>&nbsp;An orthogonal approach involves training with a short context but performing inference on a long context. Packing techniques can still be beneficial during inference.</p></div><p>Long contexts introduce several challenges: identifying data that inherently requires long contexts (such as books, podcasts, and videos) and efficiently handling smaller context data. Simply concatenating these documents and feeding them into an autoregressive transformer can lead to <em>cross-contamination</em> of sequences. For instance, predicting a sequence <code>S2</code> from an unrelated sequence <code>S1</code> becomes nearly impossible if there is a significant difference in their subject matter.</p>
-<p>The same issue arises during inference. If we dynamically batch tokens from different users, efficiency can be improved by grouping shorter conversations in the same batch. The solution to both of these issues is a technique called <em>packing</em>.</p>
-<section id="packing" class="level1 page-columns page-full">
-<h1>Packing</h1>
-<p>Packing sequences is a technique used in transformer models during training and inference to optimize the use of context length and reduce padding.</p>
-<p>Consider a transformer model with a context length denoted as <code>ctx</code>. Let’s take two sequences, <code>S1</code> and <code>S2</code>, with lengths <code>n</code> and <code>m</code> respectively, where <code>n + m &lt;= ctx</code>. If we treat these sequences separately, the total padding required would be <code>ctx - n + ctx - m</code> tokens. However, by packing these sequences together into a single context, we can significantly reduce the padding to only <code>ctx - n - m</code> tokens.</p>
-<p>The figure below illustrates the concept of packing two sequences.</p>
-<div class="quarto-figure quarto-figure-center">
-<figure class="figure">
-<p><img src="packed_sequences.png" class="img-fluid figure-img"></p>
-<figcaption>Two sequences “packed”.</figcaption>
-</figure>
-</div>
-<section id="literature-review" class="level2 page-columns page-full">
-<h2 class="anchored" data-anchor-id="literature-review">Literature Review</h2>
-<p>Packing is briefly described in most papers on language modelling (in fact, most authors cite T5 for it), here are some from the literature:</p>
+<section id="a-simple-rotation" class="level1 page-columns page-full" data-number="1">
+<h1 data-number="1"><span class="header-section-number">1</span> A Simple Rotation</h1>
+<p>RoPE is a rotation of each token given it’s positional index <span class="math inline">\(m\)</span> multiplied by frequency <span class="math inline">\(\theta\)</span>. For the 2D case with vector <span class="math inline">\(x\)</span> at position <span class="math inline">\(m\)</span> vector, the following rotation is performed: <span class="math display">\[
+\text{RoPE}(x_m)
+= \left[ \begin{array}{cc} \cos m\theta &amp; -\sin m\theta  \\ \sin m\theta   &amp; \cos m\theta  \end{array} \right] \left[ \begin{array}{cc} x^1_m \\ x^2_m \end{array} \right]
+\]</span> We rotate both queries <span class="math inline">\(q_m\)</span> and keys <span class="math inline">\(k_n\)</span> in an attempt to add the relative distance between positions <span class="math inline">\(m\)</span> and <span class="math inline">\(n\)</span>.</p>
+<p>The overarching intuition here should be that if query <span class="math inline">\(q_m\)</span> rotates away from key <span class="math inline">\(k_n\)</span> (as <span class="math inline">\(|m - n|\)</span> gets larger), the resulting attention score should decay further<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>. This turns out to be slightly misleading but it is still the core idea that RoPE presents.</p>
+<div class="no-row-height column-margin column-container"><p><sup>1</sup>&nbsp;Something like the following figure, where green means ‘high activation’ and red means ‘low activation’. <img src="position_heatmap.png" class="img-fluid"></p></div><p>As we add more dimensions to <span class="math inline">\(x_m\)</span>, we simply rotate successive dimensions of 2. Taking advantage of this fact, we can change the frequency value <span class="math inline">\(\theta\)</span> to be unique for each pair of dims:</p>
+<p><span class="math display">\[
+\small{
+\text{RoPE}(x_m)
+=
+\begin{pmatrix}
+\cos m\theta_1 &amp; -\sin m\theta_1 &amp; 0 &amp; 0 &amp; \cdots &amp; 0 &amp; 0 \\
+\sin m\theta_1 &amp; \cos m\theta_1 &amp; 0 &amp; 0 &amp; \cdots &amp; 0 &amp; 0 \\
+0 &amp; 0 &amp; \cos m\theta_2 &amp; -\sin m\theta_2 &amp; \cdots &amp; 0 &amp; 0 \\
+0 &amp; 0 &amp; \sin m\theta_2 &amp; \cos m\theta_2 &amp; \cdots &amp; 0 &amp; 0 \\
+\vdots &amp; \vdots &amp; \vdots &amp; \vdots &amp; \ddots &amp; \vdots &amp; \vdots \\
+0 &amp; 0 &amp; 0 &amp; 0 &amp; \cdots &amp; \cos m\theta_{d/2} &amp; -\sin m\theta_{d/2} \\
+0 &amp; 0 &amp; 0 &amp; 0 &amp; \cdots &amp; \sin m\theta_{d/2} &amp; \cos m\theta_{d/2} \\
+\end{pmatrix}
+\left[ \begin{array}{cc} x^1_m \\ x^2_m \\ x^3_m \\ x^4_m \\ \ldots \\ x^{d-1}_m \\ x^d_m \end{array} \right]
+}
+\]</span></p>
+</section>
+<section id="frequency-and-token-rotation" class="level1" data-number="2">
+<h1 data-number="2"><span class="header-section-number">2</span> Frequency and Token Rotation</h1>
+<p>The Frequency here governs how <strong>fast</strong> a token rotates. We start with very fast rotating dimensions and taper it off quickly to increasingly slower rotating dimensions.</p>
+<p>The following table represents the frequency at which several dimensions rotate if we use the Llama 2 70B config.</p>
 <table class="table">
+<colgroup>
+<col style="width: 24%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
 <thead>
 <tr class="header">
-<th>Paper</th>
-<th>Quote</th>
+<th>dim = 0</th>
+<th>dim = 16</th>
+<th>dim = 32</th>
+<th>dim = 48</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td>RoBERTa<a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a></td>
-<td><em>“Each input is <strong><em>packed</em></strong> with full sentences sampled contiguously from one or more documents, such that the total length is at most 512 tokens.”</em></td>
+<td><img src="rotation_dim_0.gif" class="img-fluid"></td>
+<td><img src="rotation_dim_16.gif" class="img-fluid"></td>
+<td><img src="rotation_dim_32.gif" class="img-fluid"></td>
+<td><img src="rotation_dim_48.gif" class="img-fluid"></td>
 </tr>
 <tr class="even">
-<td>GPT-3<a href="#fn3" class="footnote-ref" id="fnref3" role="doc-noteref"><sup>3</sup></a></td>
-<td><em>“During training we always train on sequences of the full nctx = 2048 token context window, <strong><em>packing</em></strong> multiple documents into a single sequence when documents are shorter than 2048, in order to increase computational efficiency.”</em></td>
-</tr>
-<tr class="odd">
-<td>T5<a href="#fn4" class="footnote-ref" id="fnref4" role="doc-noteref"><sup>4</sup></a></td>
-<td><em>“Whenever possible, we “<strong><em>pack</em></strong>” multiple sequences into each entry of the batch so that our batches contain roughly 216 = 65,536 tokens.”</em></td>
-</tr>
-<tr class="even">
-<td>T0<a href="#fn5" class="footnote-ref" id="fnref5" role="doc-noteref"><sup>5</sup></a></td>
-<td><em>“we use <strong><em>packing</em></strong> to combine multiple training examples into a single sequence to reach the maximum sequence length.”</em></td>
+<td>~ 6 steps per revolution</td>
+<td>~ 63 steps per revolution</td>
+<td>~ 628 steps per revolution</td>
+<td>~ 6283 steps per revolution</td>
 </tr>
 </tbody>
 </table>
-<div class="no-row-height column-margin column-container"><p><sup>2</sup>&nbsp;<a href="https://arxiv.org/abs/1907.11692">RoBERTa: A Robustly Optimized BERT Pretraining Approach</a></p><p><sup>3</sup>&nbsp;<a href="https://arxiv.org/abs/2005.14165">Language Models are Few-Shot Learners</a></p><p><sup>4</sup>&nbsp;<a href="https://arxiv.org/abs/1910.10683">Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer</a></p><p><sup>5</sup>&nbsp;<a href="https://arxiv.org/abs/2107.02027">Efficient Sequence Packing without Cross-contamination</a></p><p><sup>6</sup>&nbsp;<a href="https://arxiv.org/abs/2107.02027">Efficient Sequence Packing without Cross-contamination</a></p></div><p>Some approaches use the packing described above naively and add an <code>end-of-document</code> token after the sequence is done to let the model figure out the difference between samples. This <em>does</em> seem to hurt performance due to cross-contamination mentioned before, but it might not have as big of an impact at scale<a href="#fn6" class="footnote-ref" id="fnref6" role="doc-noteref"><sup>6</sup></a>.</p>
+<p>Earlier dimensions rotate much faster at high frequency values. Looking at the first dimension, it rotates at 6 steps per revolution - this would indicate a high dot product for <span class="math inline">\(n = m * 6\)</span> positions. I’m guessing the idea here is that it would transfer short-term information to the attention scores.</p>
+<p>Later dimensions, and actually it happens quite soon, rotate at much lower frequency values. These should probably encode long-context information. It is noticeable that most of the rotations are quite slow. The last dimension requires 50K steps for a full rotation, where Llama 2 only has a context length of 4K.</p>
 </section>
-<section id="dealing-with-cross-contamination" class="level2">
-<h2 class="anchored" data-anchor-id="dealing-with-cross-contamination">Dealing with Cross Contamination</h2>
-<p>To prevent cross-contamination when packing sequences, it is crucial to update both the positional information and the attention masks, not just concatenating the sequences. This ensures that the attention mechanism is still valid.</p>
-<section id="update-positional-information" class="level3">
-<h3 class="anchored" data-anchor-id="update-positional-information">Update Positional Information</h3>
-<p>When using absolute positional encodings (or ALiBi, or absolute encodings), we need to reset the positional encoding index at the start of each new sample within the packed sequence. This reset ensures that each sequence retains its positional context, which is essential for the model’s accuracy.</p>
-<div class="quarto-figure quarto-figure-center">
-<figure class="figure">
-<p><img src="packed_positional_encoding.png" class="img-fluid figure-img"></p>
-<figcaption>Packed positional encodings.</figcaption>
-</figure>
-</div>
-<p>For RoPE, you would have to do a similar rest.</p>
+<section id="decaying-effect-of-rope" class="level1" data-number="3">
+<h1 data-number="3"><span class="header-section-number">3</span> Decaying Effect of RoPE</h1>
+<p>In the original work it was argued that if we take the same unit-length vectors as keys and queries, and calculate the distance <span class="math inline">\(m - n\)</span> in attention scores, we notice that RoPE has a decaying effect on average. From the RoFormer paper:</p>
+<blockquote class="blockquote">
+<p>This property coincides with the intuition that a pair of tokens with a long relative distance should have less connection.</p>
+</blockquote>
+<p>This is more or less what we intuited at the start of this post. But it is also a highly specific case: when are keys and queries ever <strong><em>that</em></strong> aligned? In Barbero et al’s analysis on RoPE they take a more typical approach: queries and keys that are Gaussian. The table below shows the effect of both constant and gaussian vectors on the attention scores:</p>
+<table class="table">
+<colgroup>
+<col style="width: 49%">
+<col style="width: 50%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Constant Queries, Keys</th>
+<th>Gaussian Queries, Keys</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><img src="constant_relative_distance.png" class="img-fluid"></td>
+<td><img src="gauss_relative_distance.png" class="img-fluid"></td>
+</tr>
+</tbody>
+</table>
+<p>We see that the log-term decay is not gauranted and in this case even absent. Barbero et al’s analysis continues and shows that the frequencies are used as follows:</p>
+<p><strong>Low Frequencies.</strong> Most of RoPE useage (for Gemma 7B) occurs at low, slow-rotating frequencies. Since the dot product is least impacted here (most keys and queries are thus far apart that the dot product is similar)</p>
+<p><strong>High frequencies.</strong></p>
 </section>
-<section id="update-the-attention-mask" class="level3">
-<h3 class="anchored" data-anchor-id="update-the-attention-mask">Update the Attention Mask</h3>
-<p>In self-attention mechanisms, it is necessary to ensure that one sequence cannot attend to another within the same packed context. This requires merging autoregressive masks for the self-attention layer, enforcing the restriction effectively:</p>
-<div class="quarto-figure quarto-figure-center">
-<figure class="figure">
-<p><img src="packed_attention_mask.png" class="img-fluid figure-img"></p>
-<figcaption>A packed attention mask.</figcaption>
-</figure>
-</div>
-<p>This might be the most intrusive part to the codebase - it will require actually calculating a distinct attention mask per batch where we otherwise can simply have the standard diagonal created once for the whole batch. This is probably the deal-breaker for most codebases, since you need to implement it effectively otherwise flash attention will not work, you increase mask memory consumption, etc.</p>
+<section id="improvements" class="level1" data-number="4">
+<h1 data-number="4"><span class="header-section-number">4</span> Improvements</h1>
+<section id="context-length" class="level2" data-number="4.1">
+<h2 data-number="4.1" class="anchored" data-anchor-id="context-length"><span class="header-section-number">4.1</span> Context Length</h2>
+<p>We discussed earlier that the slowest rotation takes about 50K steps per revolution. This might be fine for a context length of 4K, but the Llama 3 series extends the context length up to 128K. Let’s see visually what effect this might have:</p>
+<p><img src="revolutions_base10.png" class="img-fluid"></p>
+<p>Llama 2 and 3 both have a head dimension of 128. With a base wavelength of 10K, this is sufficient for Llama 2’s 4K context length, allowing ample dimensions for long rotations. However, for Llama 3’s 128K context length, no dimension exceeds this step level for a full rotation. Consequently, every token will rotate to a different token, reducing degrees of freedom.</p>
+<p>To remedy this, several papers proposed to simply increase the base wavelength from 10K to 500K, resulting in the following figure:</p>
+<p><img src="revolutions_base500.png" class="img-fluid"></p>
+<p>That’s a very noticeable difference, and leaves it almost with the same dims left as Llama 2 had for 4K - I’m guessing that is not a coincidence.</p>
 </section>
-<section id="thats-it" class="level3">
-<h3 class="anchored" data-anchor-id="thats-it">That’s it!</h3>
-<p>Properly implementing these updates ensures that the model’s gradient step remains consistent, regardless of whether sequences are processed individually or packed.</p>
-<p>It’s worth your time looking at figures <a href="https://arxiv.org/pdf/2107.02027.pdf#page=7">3</a> and <a href="https://arxiv.org/pdf/2107.02027.pdf#page=8">4</a>, it’s from a paper that introduces the concept of cross-contamination. The paper additionally explains the performance of packing and the effect of ‘proper’ masking, it’s a great read!</p>
-<p>Another paper that discusses masked packing but during inference time that goes in depth on the effect of packing on prefilling and the time to first token is <a href="https://arxiv.org/abs/2404.09529">Prepacking</a>.</p>
-</section>
-</section>
-<section id="can-we-ignore-cross-contamination" class="level2 page-columns page-full">
-<h2 class="anchored" data-anchor-id="can-we-ignore-cross-contamination">Can we Ignore Cross Contamination?</h2>
-<p>From personal experience, there is little support for packing in public codebases, often justified by the assumption that the data is not too correlated. That could be true, but it is a strong assumption to make. Interestingly, the approach in <a href="https://arxiv.org/abs/2312.17296">Structured Packing in LLM Training Improves Long Context Utilization</a> essentially ignores proper masking to <strong>benefit</strong> long-context learning. However, the models are small scale and the data is not inherently long context.</p>
-<p>Given that t5x does have a proper packing implementation<a href="#fn7" class="footnote-ref" id="fnref7" role="doc-noteref"><sup>7</sup></a>, I would bet that Google did some internal checks to see if it helps or not. You can choose to ignore it, but you probably don’t want to risk it at the frontier level where your infra is optimized anyway.</p>
+<section id="truncating-the-base-wavelength" class="level2" data-number="4.2">
+<h2 data-number="4.2" class="anchored" data-anchor-id="truncating-the-base-wavelength"><span class="header-section-number">4.2</span> Truncating the Base Wavelength</h2>
 
 
-<div class="no-row-height column-margin column-container"><p><sup>7</sup>&nbsp;They call it <em>segmented data</em> - <a href="https://github.com/google-research/t5x/blob/df5da64315dd8ee269626f66bf60eb8f12a37124/t5x/examples/t5/network.py#L310-L317">from the T5x codebase</a>.</p></div></section>
+</section>
 </section>
 
 

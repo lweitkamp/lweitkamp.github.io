@@ -1,0 +1,1217 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.4.549">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="author" content="Laurens Weitkamp">
+<meta name="dcterms.date" content="2024-10-01">
+
+<title>QLoRA Weight Dequantizing in Triton</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="../../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../../site_libs/quarto-nav/headroom.min.js"></script>
+<script src="../../site_libs/clipboard/clipboard.min.js"></script>
+<script src="../../site_libs/quarto-html/quarto.js"></script>
+<script src="../../site_libs/quarto-html/popper.min.js"></script>
+<script src="../../site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="../../site_libs/quarto-html/anchor.min.js"></script>
+<link href="../../site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="../../site_libs/quarto-html/quarto-syntax-highlighting.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="../../site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="../../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="../../site_libs/bootstrap/bootstrap.min.css" rel="stylesheet" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+
+  <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN") {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+</head>
+
+<body class="floating nav-fixed">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top quarto-banner">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+      <div class="navbar-container container-fluid">
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll me-auto">
+  <li class="nav-item">
+    <a class="nav-link" href="../../index.html"> 
+<span class="menu-text">Home</span></a>
+  </li>  
+</ul>
+            <ul class="navbar-nav navbar-nav-scroll ms-auto">
+  <li class="nav-item compact">
+    <a class="nav-link" href="https://github.com/lweitkamp/"> <i class="bi bi-github" role="img">
+</i> 
+<span class="menu-text"></span></a>
+  </li>  
+  <li class="nav-item compact">
+    <a class="nav-link" href="https://twitter.com/laurensweitkamp"> <i class="bi bi-twitter" role="img">
+</i> 
+<span class="menu-text"></span></a>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+          <div class="quarto-navbar-tools">
+</div>
+      </div> <!-- /container-fluid -->
+    </nav>
+</header>
+<!-- content -->
+<header id="title-block-header" class="quarto-title-block default toc-left page-columns page-full">
+  <div class="quarto-title-banner page-columns page-full">
+    <div class="quarto-title column-body">
+      <h1 class="title">QLoRA Weight Dequantizing in Triton</h1>
+                      </div>
+  </div>
+    
+  
+  <div class="quarto-title-meta">
+
+      <div>
+      <div class="quarto-title-meta-heading">Author</div>
+      <div class="quarto-title-meta-contents">
+               <p>Laurens Weitkamp </p>
+            </div>
+    </div>
+      
+      <div>
+      <div class="quarto-title-meta-heading">Published</div>
+      <div class="quarto-title-meta-contents">
+        <p class="date">October 1, 2024</p>
+      </div>
+    </div>
+    
+      
+    </div>
+    
+  
+  </header><div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto">
+    
+</nav>
+<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+    </div>
+<!-- main -->
+<main class="content quarto-banner-title-block page-columns page-full" id="quarto-document-content">
+
+
+
+
+
+<p>Unsloth <a href="https://colab.research.google.com/drive/1JqKqA1XWeLHvnYAc0wzrR4JBCnq43HyH?usp=sharing#scrollTo=QoE2DGRZG2Ng">has released</a> a list of some challenging tasks related to PyTorch and parameter efficient fine-tuning. One of the challenges was writing a Triton kernel for dequantizing QLoRA NF4 quantized weights. I thought it would be a fun challenge on a technical level to go beyond tutorial-like kernels for softmax and matrix multiplications<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>.</p>
+<div class="no-row-height column-margin column-container"><p><sup>1</sup>&nbsp;if you actually have suggestions for kernels I would love to hear them.</p><p><sup>2</sup>&nbsp;Code can be found <a href="https://github.com/lweitkamp/nf4_triton">on GitHub</a> which has all Triton kernels implemented and a benchmark notebook.</p></div><p>In this post<a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a>, I’ll walk through the process of converting CUDA code to Triton and share how I achieved performance improvements of up to 1.6X to 1.8X for LLaMA models ranging from 6B to 65B parameters. Notably, the speed gains from my implementation increase as model size scales up, making this approach particularly valuable for larger models — which is basically the intended use for QLoRA.</p>
+<p>We start with discussing what QLoRA is and move on to the CUDA kernels that are typically launched by <code>bitsandybtes</code>, the library used for NF4 quantization in Unsloth and PEFT. From there, we mimic the CUDA kernels in Triton and benchmark its performance. We sort of know that the CUDA kernels can be fused in Triton and use this to our advantage to create a single fused kernel which turns out to be slower! After benchmarking with Nsight compute, we notice that memory coalescing is the offender and fix it in three distinct approaches that all outperform its CUDA counterpart.</p>
+<section id="parameter-efficient-fine-tuning-qlora" class="level1 page-columns page-full">
+<h1>Parameter Efficient Fine-Tuning &amp; QLoRA</h1>
+<p>Fine tuning LLMs is prohibitively expensive for GPU poors. A back-of-the-napkin calculation for a 7B model in bf16 totals to 56GB for training, if we scale that to 33B we are at 264GBs. There really aren’t consumer-grade NVIDIA GPUs in this range (by design), so fine-tuning the entire model is a no-go for now.</p>
+<p>Instead of fine-tuning the whole model, in parameter efficient fine-tuning we fine-tune either a subset of the weights or more typically add <a href="https://arxiv.org/abs/2106.09685">low-rank adapters</a> (LoRA). Because LoRA <em>adds</em> weights and only trains these, the LLM itself can be reduced to it’s inference capabilities which saves a whole lot of memory - 7B goes from 56GB to 14GB and 33B from 264GB to 66GB. That provides enough wiggle room for us to fine-tune a 7B model practically for free on Google Colab &amp; Kaggle on T4 notebooks.</p>
+<p>If we are using the LLMs for inference-mode only with added weights, why not take it one step further and quantize the LLMs as small as possible? This is where <a href="https://arxiv.org/abs/2305.14314">QLoRA</a> comes into play. QLoRA’s contribution is threefold:</p>
+<ul>
+<li>4-bit NormalFloat (NF4), a new data type that is “information theoretically optimal for normally distributed weights”</li>
+<li>A double quantization to reduce the average memory footprint by quantizing the quantization constant</li>
+<li>A way to page optimizers to manage memory spikes</li>
+</ul>
+<p>We are going to fully skip the last contribution and focus only the NF4 data type and what the double quantization is in depth.</p>
+<section id="the-normalfloat-nf4-data-type" class="level2 page-columns page-full">
+<h2 class="anchored" data-anchor-id="the-normalfloat-nf4-data-type">The NormalFloat (NF4) Data Type</h2>
+<p>NF4 uses 4 bits as an index to a 16 element lookup table. Since there is no 4 bit data type in Torch, we have to <em>pack</em> and <em>unpack</em> 4 bits from a <code>torch.uint8</code> type.</p>
+<div class="sourceCode" id="annotated-cell-1"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-1-1"><a href="#annotated-cell-1-1" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span> packed <span class="op">=</span> torch.zeros((), dtype<span class="op">=</span>torch.uint8)</span>
+<span id="annotated-cell-1-2"><a href="#annotated-cell-1-2" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span> packed                      <span class="co"># [0 0 0 0 | 0 0 0 0]</span></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-1" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-1-3" class="code-annotation-target"><a href="#annotated-cell-1-3" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span> packed <span class="op">=</span> packed <span class="op">+</span> <span class="dv">5</span>         <span class="co"># [0 0 0 0 | 0 1 0 1]</span></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-1" data-target-annotation="2" onclick="event.preventDefault();">2</a><span id="annotated-cell-1-4" class="code-annotation-target"><a href="#annotated-cell-1-4" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span> packed <span class="op">=</span> (packed <span class="op">&lt;&lt;</span> <span class="dv">4</span>) <span class="op">+</span> <span class="dv">9</span>  <span class="co"># [0 1 0 1 | 1 0 0 1]</span></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-1" data-target-annotation="3" onclick="event.preventDefault();">3</a><span id="annotated-cell-1-5" class="code-annotation-target"><a href="#annotated-cell-1-5" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span> first <span class="op">=</span> (packed <span class="op">&gt;&gt;</span> <span class="dv">4</span>) <span class="op">&amp;</span> <span class="bn">0xF</span> <span class="co"># [0 0 0 0 | 0 1 0 1] (5)</span></span>
+<span id="annotated-cell-1-6"><a href="#annotated-cell-1-6" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span> second <span class="op">=</span> packed <span class="op">&amp;</span> <span class="bn">0xF</span>       <span class="co"># [0 0 0 0 | 1 0 0 1] (9)</span></span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<dl class="code-annotation-container-grid">
+<dt data-target-cell="annotated-cell-1" data-target-annotation="1">1</dt>
+<dd>
+<span data-code-cell="annotated-cell-1" data-code-lines="3" data-code-annotation="1">We start with a <code>torch.uint8</code> zeros singleton tensor and add a 5 to it.</span>
+</dd>
+<dt data-target-cell="annotated-cell-1" data-target-annotation="2">2</dt>
+<dd>
+<span data-code-cell="annotated-cell-1" data-code-lines="4" data-code-annotation="2">We add another 4 bit value (9), but we have to shift the 4 least significant bits to make room.</span>
+</dd>
+<dt data-target-cell="annotated-cell-1" data-target-annotation="3">3</dt>
+<dd>
+<span data-code-cell="annotated-cell-1" data-code-lines="5,6" data-code-annotation="3">To retrieve the packed values, we use a combination of masking (<code>0xF = [0 0 0 0 1 1 1 1]</code>) and bit-shifting.</span>
+</dd>
+</dl>
+<p>4 bits (or 16 elements) is not a lot to work with, so the authors of QLoRA take advantage of the following:</p>
+<div class="page-columns page-full"><blockquote class="blockquote">
+<p>Since pretrained neural network weights usually have a zero-centered normal distribution with standard deviation σ (see Appendix F<a href="#fn3" class="footnote-ref" id="fnref3" role="doc-noteref"><sup>3</sup></a>), we can transform all weights to a single fixed distribution by scaling σ such that the distribution fits exactly into the range of our data type.</p>
+</blockquote><div class="no-row-height column-margin column-container"><p><sup>3</sup>&nbsp;Appendix F leads to a proof in the form of a statistical test.</p></div></div>
+<p>The resulting lookup table is a 16 element table of fp32 values<a href="#fn4" class="footnote-ref" id="fnref4" role="doc-noteref"><sup>4</sup></a>:</p>
+<div class="no-row-height column-margin column-container"><p><sup>4</sup>&nbsp;You can find the same in Appendix E.</p></div><div class="sourceCode" id="annotated-cell-2"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-2-1"><a href="#annotated-cell-2-1" aria-hidden="true" tabindex="-1"></a>nf4_code_table <span class="op">=</span> torch.tensor([</span>
+<span id="annotated-cell-2-2"><a href="#annotated-cell-2-2" aria-hidden="true" tabindex="-1"></a>  <span class="op">-</span><span class="fl">1.0</span>,</span>
+<span id="annotated-cell-2-3"><a href="#annotated-cell-2-3" aria-hidden="true" tabindex="-1"></a>  <span class="op">-</span><span class="fl">0.6961928009986877</span>, <span class="op">-</span><span class="fl">0.5250730514526367</span>, <span class="op">-</span><span class="fl">0.39491748809814453</span>,</span>
+<span id="annotated-cell-2-4"><a href="#annotated-cell-2-4" aria-hidden="true" tabindex="-1"></a>  <span class="op">-</span><span class="fl">0.28444138169288635</span>, <span class="op">-</span><span class="fl">0.18477343022823334</span>, <span class="op">-</span><span class="fl">0.09105003625154495</span>, </span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-2" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-2-5" class="code-annotation-target"><a href="#annotated-cell-2-5" aria-hidden="true" tabindex="-1"></a>  <span class="fl">0.0</span>,</span>
+<span id="annotated-cell-2-6"><a href="#annotated-cell-2-6" aria-hidden="true" tabindex="-1"></a>  <span class="fl">0.07958029955625534</span>, <span class="fl">0.16093020141124725</span>, <span class="fl">0.24611230194568634</span>,</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-2" data-target-annotation="2" onclick="event.preventDefault();">2</a><span id="annotated-cell-2-7" class="code-annotation-target"><a href="#annotated-cell-2-7" aria-hidden="true" tabindex="-1"></a>  <span class="fl">0.33791524171829224</span>, <span class="fl">0.44070982933044434</span>, <span class="fl">0.5626170039176941</span>, <span class="fl">0.7229568362236023</span>,</span>
+<span id="annotated-cell-2-8"><a href="#annotated-cell-2-8" aria-hidden="true" tabindex="-1"></a>  <span class="fl">1.0</span>,</span>
+<span id="annotated-cell-2-9"><a href="#annotated-cell-2-9" aria-hidden="true" tabindex="-1"></a>], dtype<span class="op">=</span>torch.float32)</span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<dl class="code-annotation-container-grid">
+<dt data-target-cell="annotated-cell-2" data-target-annotation="1">1</dt>
+<dd>
+<span data-code-cell="annotated-cell-2" data-code-lines="5" data-code-annotation="1">The table has a true zero point and a maximum range of [-1, 1].</span>
+</dd>
+<dt data-target-cell="annotated-cell-2" data-target-annotation="2">2</dt>
+<dd>
+<span data-code-cell="annotated-cell-2" data-code-lines="7" data-code-annotation="2">There is one more positive value to ensure the zero point.</span>
+</dd>
+</dl>
+<p>The elements here are carefully constructed to represent a Normal distribution (hence NormalFloat). The approach is straightforward: create quantiles of the Normal distribution based on the data type (<span class="math inline">\(k\)</span>-bits, in our case <span class="math inline">\(k=4\)</span>) and ensure there is a true zero point and that it is bounded by [-1, 1]:</p>
+<div class="quarto-figure quarto-figure-center">
+<figure class="figure">
+<p><img src="img/normal.png" class="img-fluid figure-img"></p>
+<figcaption>Normal distribution with 16 quantiles. Values and indices match the code table.</figcaption>
+</figure>
+</div>
+<section id="quantization-dequantization" class="level3 page-columns page-full">
+<h3 class="anchored" data-anchor-id="quantization-dequantization">Quantization &amp; Dequantization</h3>
+<p>The weights are quantized in successive blocks of 64 ensuring a high precision (and accounting for outlier values). This means that successive 64 weights have the same absolute-maximum scaling factor<a href="#fn5" class="footnote-ref" id="fnref5" role="doc-noteref"><sup>5</sup></a>, which is stored in fp32. At this point we quantize “as usual” - find the closest code in the lookup table <code>nf4_code_table</code> to the weight and use the index of that code as the NF4 value that we pack. For this scale factor we will stick to the term <strong>absmax</strong>.</p>
+<div class="no-row-height column-margin column-container"><p><sup>5</sup>&nbsp;weight = quantized_weight × block_scale_factor, scale factor essentially normalizes to [-1, 1].</p></div><p>Dequantization is the easier part. From a packed <code>torch.uint8</code> byte we extract two NF4 indices and look-up the corresponding code in the table <code>nf4_code_table</code>. Then scale it by retrieving the corresponding absmax value for this weight index - the packed value <strong><em>will</em></strong> have the same absmax value, but its neighbour weights might not.</p>
+</section>
+</section>
+<section id="double-quantization" class="level2 page-columns page-full">
+<h2 class="anchored" data-anchor-id="double-quantization">Double Quantization</h2>
+<p>With the NF4 quantization strategy above, let’s take a look at a 7B model. 7B in FP16 terms is about 14GBs of storage, and roughly 3.5GBs when quantized to NF4 - that’s a huge decrease! But we have to account for the absmax storage, roughly 100 million of them (7B/64), and all in fp32 - that adds almost half a GB of storage. We could reduce the number of absmax factors by increasing the block size, but this turns out to have negative effects on quantization performance.</p>
+<p>To reduce the overhead of the absmax storage, QLoRA does a <em>double quantization</em> - quantize the absmax from fp32 to fp8. Quantization here is purely to a byte level so no packing and unpacking is involved here, and the type of quantization is <a href="https://arxiv.org/abs/1511.04561">fp8</a><a href="#fn6" class="footnote-ref" id="fnref6" role="doc-noteref"><sup>6</sup></a>. The approach to quantization is to first subtract the mean from absmax in total (since the values are all positive), take blocks of 256 (a bit courser here for large compression gains) and quantize them to a code table of 128 fp32 values.</p>
+<div class="no-row-height column-margin column-container"><p><sup>6</sup>&nbsp;I’m not sure exactly how it works, but it is using a <a href="https://github.com/bitsandbytes-foundation/bitsandbytes/blob/main/bitsandbytes/functional.py#L363">dynamic quantization map</a> - another type of code.</p></div><p>To dequantize the absmax we approximately follow the code below.</p>
+<div class="sourceCode" id="annotated-cell-3"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-3-1"><a href="#annotated-cell-3-1" aria-hidden="true" tabindex="-1"></a>absmax[  <span class="dv">0</span>] <span class="op">=</span> code[quantized_absmax[  <span class="dv">0</span>]] <span class="op">*</span> absmax_scale[<span class="dv">0</span>] <span class="op">+</span> absmax_mean</span>
+<span id="annotated-cell-3-2"><a href="#annotated-cell-3-2" aria-hidden="true" tabindex="-1"></a>absmax[  <span class="dv">1</span>] <span class="op">=</span> code[quantized_absmax[  <span class="dv">1</span>]] <span class="op">*</span> absmax_scale[<span class="dv">0</span>] <span class="op">+</span> absmax_mean</span>
+<span id="annotated-cell-3-3"><a href="#annotated-cell-3-3" aria-hidden="true" tabindex="-1"></a>...</span>
+<span id="annotated-cell-3-4"><a href="#annotated-cell-3-4" aria-hidden="true" tabindex="-1"></a>absmax[<span class="dv">255</span>] <span class="op">=</span> code[quantized_absmax[<span class="dv">255</span>]] <span class="op">*</span> absmax_scale[<span class="dv">0</span>] <span class="op">+</span> absmax_mean</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-3" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-3-5" class="code-annotation-target"><a href="#annotated-cell-3-5" aria-hidden="true" tabindex="-1"></a>absmax[<span class="dv">256</span>] <span class="op">=</span> code[quantized_absmax[<span class="dv">256</span>]] <span class="op">*</span> absmax_scale[<span class="dv">1</span>] <span class="op">+</span> absmax_mean</span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<dl class="code-annotation-container-grid">
+<dt data-target-cell="annotated-cell-3" data-target-annotation="1">1</dt>
+<dd>
+<span data-code-cell="annotated-cell-3" data-code-lines="5" data-code-annotation="1">Note the same scale is valid per 256 blocks.</span>
+</dd>
+</dl>
+</section>
+</section>
+<section id="cuda-reference-kernels" class="level1 page-columns page-full">
+<h1>CUDA Reference Kernels</h1>
+<p>The NF4 data type the torch linear layer that uses it are defined in the <a href="https://github.com/bitsandbytes-foundation/bitsandbytes"><code>bitsandbytes</code></a> library. Here we can also find functions for <a href="https://github.com/bitsandbytes-foundation/bitsandbytes/blob/main/bitsandbytes/functional.py#L1165">quantizing</a> and <a href="https://github.com/bitsandbytes-foundation/bitsandbytes/blob/main/bitsandbytes/functional.py#L1296">dequantizing</a> weights.</p>
+<p>We start with the <a href="https://github.com/bitsandbytes-foundation/bitsandbytes/blob/main/bitsandbytes/functional.py#L1296"><code>dequantize_4bit</code></a> function below, stripped of anything irellevant to us:</p>
+<div class="sourceCode" id="annotated-cell-4"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-4-1"><a href="#annotated-cell-4-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_4bit(...):</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-4" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-4-2" class="code-annotation-target"><a href="#annotated-cell-4-2" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> dequantize_blockwise(quant_state.absmax, quant_state.state2)</span>
+<span id="annotated-cell-4-3"><a href="#annotated-cell-4-3" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">+=</span> quant_state.offset</span>
+<span id="annotated-cell-4-4"><a href="#annotated-cell-4-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-4-5"><a href="#annotated-cell-4-5" aria-hidden="true" tabindex="-1"></a>    out <span class="op">=</span> torch.empty(quant_state.shape, dtype<span class="op">=</span>quant_state.dtype, device<span class="op">=</span>A.device)</span>
+<span id="annotated-cell-4-6"><a href="#annotated-cell-4-6" aria-hidden="true" tabindex="-1"></a>    lib.cdequantize_blockwise_fp16_nf4(</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-4" data-target-annotation="2" onclick="event.preventDefault();">2</a><span id="annotated-cell-4-7" class="code-annotation-target"><a href="#annotated-cell-4-7" aria-hidden="true" tabindex="-1"></a>        <span class="va">None</span>,</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-4" data-target-annotation="3" onclick="event.preventDefault();">3</a><span id="annotated-cell-4-8" class="code-annotation-target"><a href="#annotated-cell-4-8" aria-hidden="true" tabindex="-1"></a>        get_ptr(A),</span>
+<span id="annotated-cell-4-9"><a href="#annotated-cell-4-9" aria-hidden="true" tabindex="-1"></a>        get_ptr(absmax),</span>
+<span id="annotated-cell-4-10"><a href="#annotated-cell-4-10" aria-hidden="true" tabindex="-1"></a>        get_ptr(out),</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-4" data-target-annotation="4" onclick="event.preventDefault();">4</a><span id="annotated-cell-4-11" class="code-annotation-target"><a href="#annotated-cell-4-11" aria-hidden="true" tabindex="-1"></a>        ct.c_int(quant_state.blocksize),</span>
+<span id="annotated-cell-4-12"><a href="#annotated-cell-4-12" aria-hidden="true" tabindex="-1"></a>        ct.c_int(out.numel()),</span>
+<span id="annotated-cell-4-13"><a href="#annotated-cell-4-13" aria-hidden="true" tabindex="-1"></a>        stream,</span>
+<span id="annotated-cell-4-14"><a href="#annotated-cell-4-14" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="annotated-cell-4-15"><a href="#annotated-cell-4-15" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> out</span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<dl class="code-annotation-container-grid">
+<dt data-target-cell="annotated-cell-4" data-target-annotation="1">1</dt>
+<dd>
+<span data-code-cell="annotated-cell-4" data-code-lines="2" data-code-annotation="1">First the absmax value is dequantized from fp8 to fp32. <code>quant_state.offset</code> is the mean which was subtracted before quantizing.</span>
+</dd>
+<dt data-target-cell="annotated-cell-4" data-target-annotation="2">2</dt>
+<dd>
+<span data-code-cell="annotated-cell-4" data-code-lines="7" data-code-annotation="2">The first argument is the code table. Since for NF4 this is hardcoded in the kernel, the first input is <code>None</code>.</span>
+</dd>
+<dt data-target-cell="annotated-cell-4" data-target-annotation="3">3</dt>
+<dd>
+<span data-code-cell="annotated-cell-4" data-code-lines="8" data-code-annotation="3">The quantized weights tensor. If the input is of size <span class="math inline">\(M \times N\)</span>, <span class="math inline">\(A\)</span> is <span class="math inline">\(\frac{M \times N}{2}\)</span> due to packing.</span>
+</dd>
+<dt data-target-cell="annotated-cell-4" data-target-annotation="4">4</dt>
+<dd>
+<span data-code-cell="annotated-cell-4" data-code-lines="11" data-code-annotation="4">The blocksize for dequantizing the weights - 64.</span>
+</dd>
+</dl>
+<p>Ok, straightforward enough - first dequantize the absmax (<code>dequantize_blockwise</code>) and then use it to dequantize the weights (<code>cdequantize_blockwise_fp16_nf4</code>). It’s quite a rabbit hole to go through<a href="#fn7" class="footnote-ref" id="fnref7" role="doc-noteref"><sup>7</sup></a> but we end up with calls of the same kernel, albeit parameterized differently. I think first we should look at the main data structure used throughout <code>bitsandbytes</code>, the <a href="https://github.com/bitsandbytes-foundation/bitsandbytes/blob/main/bitsandbytes/functional.py#L678"><code>QuantState</code></a>:</p>
+<div class="no-row-height column-margin column-container"><p><sup>7</sup>&nbsp;<a href="https://github.com/bitsandbytes-foundation/bitsandbytes/blob/main/bitsandbytes/functional.py#L959"><code>dequantize_blockwise</code></a> -&gt; <a href="https://github.com/bitsandbytes-foundation/bitsandbytes/blob/b8223fed8aa3f6422f2426828f358f760e208a52/csrc/pythonInterface.cpp#L215"><code>cdequantize_blockwise_fp32</code></a> -&gt; <a href="https://github.com/bitsandbytes-foundation/bitsandbytes/blob/b8223fed8aa3f6422f2426828f358f760e208a52/csrc/pythonInterface.cpp#L144"><code>dequantizeBlockwise_fp32</code></a> -&gt; <a href="https://github.com/bitsandbytes-foundation/bitsandbytes/blob/b8223fed8aa3f6422f2426828f358f760e208a52/csrc/ops.cu#L79"><code>dequantizeBlockwise</code></a> -&gt; <a href="https://github.com/bitsandbytes-foundation/bitsandbytes/blob/b8223fed8aa3f6422f2426828f358f760e208a52/csrc/kernels.cu#L595"><code>kDequantizeBlockwise</code></a> vs</p></div><table class="table">
+<colgroup>
+<col style="width: 14%">
+<col style="width: 85%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Parameter</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>absmax</td>
+<td>Holds block-wise scaling factors used to rescale quantized weights.</td>
+</tr>
+<tr class="even">
+<td>shape</td>
+<td>The shape of the quantized tensor.</td>
+</tr>
+<tr class="odd">
+<td>code</td>
+<td>Lookup table mapping 4-bit indices to FP32 quantiles representing NF4.</td>
+</tr>
+<tr class="even">
+<td>dtype</td>
+<td>Data type for the dequantized output (e.g., fp16).</td>
+</tr>
+<tr class="odd">
+<td>blocksize</td>
+<td>Number of elements processed per block to compute absmax.</td>
+</tr>
+<tr class="even">
+<td>quant_type</td>
+<td>Specifies the quantization method (e.g., NF4).</td>
+</tr>
+<tr class="odd">
+<td>offset</td>
+<td>Added to absmax, used to shift the dequantization scale.</td>
+</tr>
+<tr class="even">
+<td>state2</td>
+<td><code>QuantState</code> for absmax quantization.</td>
+</tr>
+<tr class="odd">
+<td>nested</td>
+<td>Is double quantization used? Boolean that is <code>True</code> in our case</td>
+</tr>
+</tbody>
+</table>
+<p>This table will come in handy, we will also need it when working on the Triton kernels.</p>
+<p>Back to the kernels. Let’s assume we are dequantizing some tensor of size <span class="math inline">\(M \times N\)</span>, it would translate the following calls:</p>
+<table class="table">
+<thead>
+<tr class="header">
+<th>Parameter</th>
+<th>Dequantizing Weights</th>
+<th>Dequantizing Absmax</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Template Parameters</strong></td>
+<td></td>
+<td></td>
+</tr>
+<tr class="even">
+<td>T</td>
+<td>fp16</td>
+<td>fp32</td>
+</tr>
+<tr class="odd">
+<td>TILE_SIZE</td>
+<td>1024</td>
+<td>512</td>
+</tr>
+<tr class="even">
+<td>THREADS</td>
+<td>64</td>
+<td>64</td>
+</tr>
+<tr class="odd">
+<td>NUM_PER_TH</td>
+<td>8</td>
+<td>8</td>
+</tr>
+<tr class="even">
+<td>DATA_TYPE</td>
+<td><a href="https://github.com/bitsandbytes-foundation/bitsandbytes/blob/8ed7d97b4901b4f01f9ac04262e3a34d1cb6941a/csrc/ops.cuh#L87"><code>NF4 (= 2)</code></a></td>
+<td><a href="https://github.com/bitsandbytes-foundation/bitsandbytes/blob/8ed7d97b4901b4f01f9ac04262e3a34d1cb6941a/csrc/ops.cuh#L85"><code>General8Bit (= 0)</code></a></td>
+</tr>
+<tr class="odd">
+<td><strong>Kernel Launch</strong></td>
+<td></td>
+<td></td>
+</tr>
+<tr class="even">
+<td>blocks in grid</td>
+<td>65536</td>
+<td>2048</td>
+</tr>
+<tr class="odd">
+<td>block dim</td>
+<td>64</td>
+<td>64</td>
+</tr>
+<tr class="even">
+<td>shmem</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr class="odd">
+<td><strong>Function Arguments</strong></td>
+<td></td>
+<td></td>
+</tr>
+<tr class="even">
+<td>code</td>
+<td>None (see below)</td>
+<td>fp32 code of size <span class="math inline">\(128\)</span></td>
+</tr>
+<tr class="odd">
+<td>A</td>
+<td>uint8 <span class="math inline">\(\frac{M \cdot N}{2}\)</span> elements</td>
+<td>uint8 <span class="math inline">\(\frac{M \cdot N}{64}\)</span></td>
+</tr>
+<tr class="even">
+<td>absmax</td>
+<td>fp32 <span class="math inline">\(\frac{M \cdot N}{256}\)</span> elements</td>
+<td>fp32 <span class="math inline">\(\frac{\frac{M \cdot N}{64}}{256}\)</span> elements</td>
+</tr>
+<tr class="odd">
+<td>out</td>
+<td>fp16 <span class="math inline">\(M \times N\)</span></td>
+<td>fp32 <span class="math inline">\(\frac{M \cdot N}{64}\)</span></td>
+</tr>
+<tr class="even">
+<td>blocksize</td>
+<td>32 (64 // 2 for 2 elements per byte)</td>
+<td>256</td>
+</tr>
+<tr class="odd">
+<td>n</td>
+<td><span class="math inline">\(M\cdot N\)</span> elements</td>
+<td><span class="math inline">\(\frac{M \cdot N}{64}\)</span> elements</td>
+</tr>
+</tbody>
+</table>
+<p>The number of elements <code>n</code> and the <code>TILE_SIZE</code> <a href="https://github.com/bitsandbytes-foundation/bitsandbytes/blob/b8223fed8aa3f6422f2426828f358f760e208a52/csrc/ops.cu#L79-L91">both define</a> how many blocks are in our CUDA launch grid, which is <span class="math inline">\(\lceil\frac{M \cdot N}{\text{TILE\_ SIZE}}\rceil\)</span> for the weights. Furthermore, each block has 64 threads (<code>THREADS</code>) and each thread processing 8 weights (<code>NUM_PER_TH</code>), which means <span class="math inline">\(\lceil\frac{M \cdot N}{1024}\rceil \cdot 64 \cdot 8 = \frac{M \cdot N}{2}\)</span> elements are processed<a href="#fn8" class="footnote-ref" id="fnref8" role="doc-noteref"><sup>8</sup></a>.</p>
+<div class="no-row-height column-margin column-container"><p><sup>8</sup>&nbsp;When dequantizing the input is packed, so we get a weight matrix of <span class="math inline">\(\frac{M \cdot N}{2}\)</span> as input.</p></div><p>For absmax is more-or-less the same, although we reduce tile size to 512 because inputs are <em>not</em> packed.</p>
+<p>I’m going to rewrite the kernels being launched heavily for didactic purposes but will keep most relevant stuff:</p>
+<div class="sourceCode" id="annotated-cell-5"><pre class="sourceCode cu code-annotation-code code-with-copy code-annotated"><code class="sourceCode isocpp"><span id="annotated-cell-5-1"><a href="#annotated-cell-5-1" aria-hidden="true" tabindex="-1"></a>__global__ <span class="dt">void</span> kDequantizeBlockwise<span class="op">(</span></span>
+<span id="annotated-cell-5-2"><a href="#annotated-cell-5-2" aria-hidden="true" tabindex="-1"></a>    <span class="dt">float</span> <span class="op">*</span>code<span class="op">,</span> <span class="dt">unsigned</span> <span class="dt">char</span> <span class="op">*</span> A<span class="op">,</span> <span class="dt">float</span> <span class="op">*</span> absmax<span class="op">,</span> T <span class="op">*</span>out<span class="op">,</span></span>
+<span id="annotated-cell-5-3"><a href="#annotated-cell-5-3" aria-hidden="true" tabindex="-1"></a>    <span class="at">const</span> <span class="dt">int</span> blocksize<span class="op">,</span> <span class="at">const</span> <span class="dt">int</span> n<span class="op">,</span></span>
+<span id="annotated-cell-5-4"><a href="#annotated-cell-5-4" aria-hidden="true" tabindex="-1"></a><span class="op">)</span> <span class="op">{</span></span>
+<span id="annotated-cell-5-5"><a href="#annotated-cell-5-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">const</span> <span class="dt">int</span> n_load <span class="op">=</span> <span class="op">(</span>gridDim<span class="op">.</span>x <span class="op">*</span> TILE_SIZE<span class="op">);</span></span>
+<span id="annotated-cell-5-6"><a href="#annotated-cell-5-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">const</span> <span class="dt">int</span> base_idx <span class="op">=</span> <span class="op">(</span>blockIdx<span class="op">.</span>x <span class="op">*</span> TILE_SIZE<span class="op">);</span></span>
+<span id="annotated-cell-5-7"><a href="#annotated-cell-5-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-5-8"><a href="#annotated-cell-5-8" aria-hidden="true" tabindex="-1"></a>  <span class="dt">unsigned</span> <span class="dt">char</span> qvals<span class="op">[</span>NUM_PER_TH<span class="op">];</span></span>
+<span id="annotated-cell-5-9"><a href="#annotated-cell-5-9" aria-hidden="true" tabindex="-1"></a>  T vals<span class="op">[</span>NUM_PER_TH<span class="op">*((</span>DATA_TYPE <span class="op">&gt;</span> <span class="dv">0</span><span class="op">)</span> <span class="op">?</span> <span class="dv">2</span> <span class="op">:</span> <span class="dv">1</span><span class="op">)];</span></span>
+<span id="annotated-cell-5-10"><a href="#annotated-cell-5-10" aria-hidden="true" tabindex="-1"></a></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-5" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-5-11" class="code-annotation-target"><a href="#annotated-cell-5-11" aria-hidden="true" tabindex="-1"></a>  __shared__ <span class="kw">typename</span> LoadChar<span class="op">::</span>TempStorage loadchar<span class="op">;</span></span>
+<span id="annotated-cell-5-12"><a href="#annotated-cell-5-12" aria-hidden="true" tabindex="-1"></a>  __shared__ <span class="kw">typename</span> StoreT<span class="op">::</span>TempStorage storet<span class="op">;</span></span>
+<span id="annotated-cell-5-13"><a href="#annotated-cell-5-13" aria-hidden="true" tabindex="-1"></a></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-5" data-target-annotation="2" onclick="event.preventDefault();">2</a><span id="annotated-cell-5-14" class="code-annotation-target"><a href="#annotated-cell-5-14" aria-hidden="true" tabindex="-1"></a>  <span class="cf">for</span> <span class="op">(</span><span class="dt">int</span> i <span class="op">=</span> base_idx<span class="op">;</span> i <span class="op">&lt;</span> n_load<span class="op">;</span> i <span class="op">+=</span> gridDim<span class="op">.</span>x<span class="op">*</span>TILE_SIZE<span class="op">)</span> <span class="op">{</span></span>
+<span id="annotated-cell-5-15"><a href="#annotated-cell-5-15" aria-hidden="true" tabindex="-1"></a>    local_abs_max <span class="op">=</span> __ldg<span class="op">(&amp;</span>absmax<span class="op">[(</span>i<span class="op">+</span>threadId<span class="op">.</span>x<span class="op">*</span>NUM_PER_TH<span class="op">)/</span>blocksize<span class="op">]);</span></span>
+<span id="annotated-cell-5-16"><a href="#annotated-cell-5-16" aria-hidden="true" tabindex="-1"></a></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-5" data-target-annotation="3" onclick="event.preventDefault();">3</a><span id="annotated-cell-5-17" class="code-annotation-target"><a href="#annotated-cell-5-17" aria-hidden="true" tabindex="-1"></a>    __syncthreads<span class="op">();</span></span>
+<span id="annotated-cell-5-18"><a href="#annotated-cell-5-18" aria-hidden="true" tabindex="-1"></a>    LoadChar<span class="op">(</span>loadchar<span class="op">).</span>Load<span class="op">(&amp;(</span>A<span class="op">[</span>i<span class="op">]),</span> qvals<span class="op">);</span></span>
+<span id="annotated-cell-5-19"><a href="#annotated-cell-5-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-5-20"><a href="#annotated-cell-5-20" aria-hidden="true" tabindex="-1"></a>    <span class="cf">switch</span> <span class="op">(</span>DATA_TYPE<span class="op">)</span> <span class="op">{</span></span>
+<span id="annotated-cell-5-21"><a href="#annotated-cell-5-21" aria-hidden="true" tabindex="-1"></a>        <span class="cf">case</span> General8Bit<span class="op">:</span></span>
+<span id="annotated-cell-5-22"><a href="#annotated-cell-5-22" aria-hidden="true" tabindex="-1"></a>          <span class="cf">for</span><span class="op">(</span><span class="dt">int</span> j <span class="op">=</span> <span class="dv">0</span><span class="op">;</span> j <span class="op">&lt;</span> NUM_PER_TH<span class="op">;</span> j<span class="op">++)</span></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-5" data-target-annotation="4" onclick="event.preventDefault();">4</a><span id="annotated-cell-5-23" class="code-annotation-target"><a href="#annotated-cell-5-23" aria-hidden="true" tabindex="-1"></a>            vals<span class="op">[</span>j<span class="op">]</span> <span class="op">=</span> __ldg<span class="op">(&amp;</span>code<span class="op">[</span>qvals<span class="op">[</span>j<span class="op">]])</span> <span class="op">*</span> local_abs_max<span class="op">;</span></span>
+<span id="annotated-cell-5-24"><a href="#annotated-cell-5-24" aria-hidden="true" tabindex="-1"></a>        <span class="cf">case</span> NF4<span class="op">:</span></span>
+<span id="annotated-cell-5-25"><a href="#annotated-cell-5-25" aria-hidden="true" tabindex="-1"></a>          <span class="cf">for</span><span class="op">(</span><span class="dt">int</span> j <span class="op">=</span> <span class="dv">0</span><span class="op">;</span> j <span class="op">&lt;</span> NUM_PER_TH<span class="op">;</span> j<span class="op">++)</span> <span class="op">{</span></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-5" data-target-annotation="5" onclick="event.preventDefault();">5</a><span id="annotated-cell-5-26" class="code-annotation-target"><a href="#annotated-cell-5-26" aria-hidden="true" tabindex="-1"></a>            vals<span class="op">[</span>j<span class="op">*</span><span class="dv">2</span><span class="op">]</span> <span class="op">=</span> dDequantizeNF4<span class="op">(</span>qvals<span class="op">[</span>j<span class="op">]</span> <span class="op">&gt;&gt;</span> <span class="dv">4</span><span class="op">)</span> <span class="op">*</span> local_abs_max<span class="op">;</span></span>
+<span id="annotated-cell-5-27"><a href="#annotated-cell-5-27" aria-hidden="true" tabindex="-1"></a>            vals<span class="op">[</span>j<span class="op">*</span><span class="dv">2</span> <span class="op">+</span> <span class="dv">1</span><span class="op">]</span> <span class="op">=</span> dDequantizeNF4<span class="op">(</span>qvals<span class="op">[</span>j<span class="op">]</span> <span class="op">&amp;</span> <span class="bn">0x0F</span><span class="op">)</span> <span class="op">*</span> local_abs_max<span class="op">;</span></span>
+<span id="annotated-cell-5-28"><a href="#annotated-cell-5-28" aria-hidden="true" tabindex="-1"></a>          <span class="op">}</span></span>
+<span id="annotated-cell-5-29"><a href="#annotated-cell-5-29" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="annotated-cell-5-30"><a href="#annotated-cell-5-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-5-31"><a href="#annotated-cell-5-31" aria-hidden="true" tabindex="-1"></a>    __syncthreads<span class="op">();</span></span>
+<span id="annotated-cell-5-32"><a href="#annotated-cell-5-32" aria-hidden="true" tabindex="-1"></a>    StoreT<span class="op">(</span>storet<span class="op">).</span>Store<span class="op">(&amp;(</span>out<span class="op">[(</span>DATA_TYPE <span class="op">&gt;</span> <span class="dv">0</span><span class="op">)</span> <span class="op">?</span> i<span class="op">*</span><span class="dv">2</span> <span class="op">:</span> i<span class="op">]),</span> vals<span class="op">);</span></span>
+<span id="annotated-cell-5-33"><a href="#annotated-cell-5-33" aria-hidden="true" tabindex="-1"></a>  <span class="op">}</span></span>
+<span id="annotated-cell-5-34"><a href="#annotated-cell-5-34" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<dl class="code-annotation-container-grid">
+<dt data-target-cell="annotated-cell-5" data-target-annotation="1">1</dt>
+<dd>
+<span data-code-cell="annotated-cell-5" data-code-lines="11" data-code-annotation="1">Shared memory is allocated here but the CUDA kernel has 0 mem reserved in the launch grid. Either way we do not need shared memory for this kernel.</span>
+</dd>
+<dt data-target-cell="annotated-cell-5" data-target-annotation="2">2</dt>
+<dd>
+<span data-code-cell="annotated-cell-5" data-code-lines="14" data-code-annotation="2">A <a href="https://developer.nvidia.com/blog/cuda-pro-tip-write-flexible-kernels-grid-stride-loops/">grid strided loop</a>, although the parameters used for launching only allow for a single iteration.</span>
+</dd>
+<dt data-target-cell="annotated-cell-5" data-target-annotation="3">3</dt>
+<dd>
+<span data-code-cell="annotated-cell-5" data-code-lines="17" data-code-annotation="3">A thread sync, but we do not really need to synchronize threads here since the memory is not shared - is this wasteful? IDK.</span>
+</dd>
+<dt data-target-cell="annotated-cell-5" data-target-annotation="4">4</dt>
+<dd>
+<span data-code-cell="annotated-cell-5" data-code-lines="23" data-code-annotation="4">For absmax dequantization we can load the quantized index and look it up in the code table.</span>
+</dd>
+<dt data-target-cell="annotated-cell-5" data-target-annotation="5">5</dt>
+<dd>
+<span data-code-cell="annotated-cell-5" data-code-lines="26" data-code-annotation="5">The NF4 lookup table - we can also see that for NF4 the <code>code</code> pointer is indeed not used. Also, the bit shifts happen here!</span>
+</dd>
+</dl>
+<section id="what-gain-could-a-triton-kernel-have" class="level2">
+<h2 class="anchored" data-anchor-id="what-gain-could-a-triton-kernel-have">What Gain Could a Triton Kernel Have?</h2>
+<p>Having looked at the CUDA kernel, what kind of gain in performance can we expect when switching to Triton? I suspect the following two points could be used:</p>
+<ol type="1">
+<li>We can get rid of all the overhead the kernel adds, but this might not be a tremendous gain</li>
+<li>We can ultimately fuse the two kernels, since the absmax value is shared by a lot of threads.</li>
+</ol>
+<p>Fleshing point 2 out a bit more, we can load a block of the weights, get the corresponding absmax and dequantize it in a blockwise fashion before dequantizing the weights. The more I write this the more I think that there is a lot of locality referencing going on with the absmax, even if the dequantization itself is just an elementwise operation. The only downside I see is that we probably will dequantize the same absmax several times.</p>
+</section>
+</section>
+<section id="benchmarking-and-profiling" class="level1">
+<h1>Benchmarking and Profiling</h1>
+<p>Benchmarking and profiling was done on T4 GPUs, which are sm75 GPUs meaning that Triton will not handle bfloat16 operations.</p>
+<p>All kernels will be profiled using Nsight Compute on 8192 by 32768 sizes matrices, representing a linear layer in the MLP for LLaMA 70B models. The shape technically doesn’t matter though since dequantization is a linear operation.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">ncu</span> <span class="at">--target-processes</span> all </span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--set</span> detailed </span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--import-source</span> yes </span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> SchedulerStats </span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> WarpStateStats </span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> SpeedOfLight_RooflineChart </span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> SpeedOfLight_HierarchicalTensorRooflineChart </span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>  <span class="ex">-o</span> output_file_location </span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>  <span class="ex">python</span> vector_add.py</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<p>We will also benchmark a variety of sizes from 7B to 70B LLaMA models using Triton’s <a href="https://triton-lang.org/main/python-api/generated/triton.testing.Benchmark.html">Benchmark</a> functionality to test how fast the resulting kernels are for increasing shapes.</p>
+</section>
+<section id="attempt-0-writing-two-kernels" class="level1">
+<h1>Attempt 0: Writing Two Kernels</h1>
+<p>As a baseline, let’s attempt to just translate the two CUDA Kernels into two Triton kernels. Code below is not exact, for that please see the <a href="">github</a> code.</p>
+<p>We can basically directly implement the absmax dequantization as described earlier. Note that the mean addition is done outside of the kernel call.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="at">@triton.jit</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_absmax_kernel_v0(</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    absmax_ptr, absmax_quant_ptr, absmax_code_ptr, absmax_scale_ptr,</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    numel: <span class="bu">int</span>, blocksize: <span class="bu">int</span>,</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>    BLOCK_SIZE: tl.constexpr,</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>):</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>    offsets <span class="op">=</span> tl.program_id(<span class="dv">0</span>) <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, BLOCK_SIZE)</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Load uint8 quant and look-up code.</span></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>    absmax_quant <span class="op">=</span> tl.load(absmax_quant_ptr <span class="op">+</span> offsets)</span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>    absmax_code <span class="op">=</span> tl.load(absamx_code_ptr <span class="op">+</span> absmax_quant)</span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Look up scale and dequantize, see: strided index.</span></span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a>    absmax_scale <span class="op">=</span> tl.load(absmax_scale_ptr <span class="op">+</span> (offsets <span class="op">//</span> blocksize))</span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> absmax_code <span class="op">*</span> absmax_scale</span>
+<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>    tl.store(absmax_ptr <span class="op">+</span> offsets, absmax)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<p>The weights are quantized into groups of 64, so we need to ensure we load the correct absmax value. We also need to unpack the weights by shifting (first four) and masking (last four).</p>
+<div class="sourceCode" id="annotated-cell-8"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-8-1"><a href="#annotated-cell-8-1" aria-hidden="true" tabindex="-1"></a><span class="at">@triton.jit</span></span>
+<span id="annotated-cell-8-2"><a href="#annotated-cell-8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_weights_kernel_v0(</span>
+<span id="annotated-cell-8-3"><a href="#annotated-cell-8-3" aria-hidden="true" tabindex="-1"></a>    weights_ptr, weights_quant_ptr, weights_code_ptr, absmax_ptr,</span>
+<span id="annotated-cell-8-4"><a href="#annotated-cell-8-4" aria-hidden="true" tabindex="-1"></a>    numel_weights: <span class="bu">int</span>, blocksize: <span class="bu">int</span>,</span>
+<span id="annotated-cell-8-5"><a href="#annotated-cell-8-5" aria-hidden="true" tabindex="-1"></a>    BLOCK_SIZE: tl.constexpr,</span>
+<span id="annotated-cell-8-6"><a href="#annotated-cell-8-6" aria-hidden="true" tabindex="-1"></a>):</span>
+<span id="annotated-cell-8-7"><a href="#annotated-cell-8-7" aria-hidden="true" tabindex="-1"></a>    offsets <span class="op">=</span> tl.program_id(<span class="dv">0</span>) <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, BLOCK_SIZE)</span>
+<span id="annotated-cell-8-8"><a href="#annotated-cell-8-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-8-9"><a href="#annotated-cell-8-9" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> tl.load(absmax_ptr <span class="op">+</span> (offsets <span class="op">//</span> blocksize))</span>
+<span id="annotated-cell-8-10"><a href="#annotated-cell-8-10" aria-hidden="true" tabindex="-1"></a>    weights_quant <span class="op">=</span> tl.load(weights_quant_ptr <span class="op">+</span> input_offset)</span>
+<span id="annotated-cell-8-11"><a href="#annotated-cell-8-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-8-12"><a href="#annotated-cell-8-12" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Unpack first and last four bits &amp; do NF4 code lookup.</span></span>
+<span id="annotated-cell-8-13"><a href="#annotated-cell-8-13" aria-hidden="true" tabindex="-1"></a>    weights_first <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&gt;&gt;</span> <span class="dv">4</span>)) <span class="op">*</span> absmax</span>
+<span id="annotated-cell-8-14"><a href="#annotated-cell-8-14" aria-hidden="true" tabindex="-1"></a>    weights_second <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&amp;</span> <span class="bn">0xF</span>)) <span class="op">*</span> absmax</span>
+<span id="annotated-cell-8-15"><a href="#annotated-cell-8-15" aria-hidden="true" tabindex="-1"></a></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-8" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-8-16" class="code-annotation-target"><a href="#annotated-cell-8-16" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> input_offsets <span class="op">*</span> <span class="dv">2</span>, weights_first)</span>
+<span id="annotated-cell-8-17"><a href="#annotated-cell-8-17" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> input_offsets <span class="op">*</span> <span class="dv">2</span> <span class="op">+</span> <span class="dv">1</span>, weights_second)</span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<dl class="code-annotation-container-grid">
+<dt data-target-cell="annotated-cell-8" data-target-annotation="1">1</dt>
+<dd>
+<span data-code-cell="annotated-cell-8" data-code-lines="16" data-code-annotation="1">The way we store the data is interleaved. The first stores [0 -&gt; 0, 2 -&gt; 2], the second [1 -&gt; 1, 3 -&gt; 3] etc. This is not great for memory coalescing.</span>
+</dd>
+</dl>
+<p>To benchmark performance, we dequantize a range of tensors that resemble LLaMA MLP weights from 7B to 65B with Triton’s <code>@triton.testing.perf_report</code>. Results can be seen in the figure below.</p>
+<div class="quarto-figure quarto-figure-left">
+<figure class="figure">
+<p><img src="img/NF4_Dequantization_Performance_T4_GPU_Triton V0.png" class="img-fluid quarto-figure quarto-figure-left figure-img"></p>
+<figcaption>Triton V0 seems to be on par with CUDA counterpart.</figcaption>
+</figure>
+</div>
+<p>Performance of these kernels are not bad, they seems to be equivalent to the <code>bitsandbytes</code> CUDA kernels. That does invalidate point 1, there is no gain simply by removing overhead (or perhaps marginally so). The interleaved storing is not perfect, we will get back to that later on!</p>
+</section>
+<section id="attempt-1-single-fused-kernel" class="level1">
+<h1>Attempt 1: Single Fused Kernel</h1>
+<p>Now let’s step it up and fuse the kernels into one. The main thing we need to be careful of is pointer arithmetic.</p>
+<p>As a reminder, the weights are quantized with an absmax for every 64 weights, and each absmax in turn is quantized in blocks of 256. Dequantizing <code>weights[0]</code> will need <code>absmax[0]</code> and <code>absmax_scale[0]</code>. Dequantizing <code>weights[1000152]</code> will need <code>absmax[31254]</code> and <code>absmax_scale[122]</code>.</p>
+<div class="sourceCode" id="annotated-cell-9"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-9-1"><a href="#annotated-cell-9-1" aria-hidden="true" tabindex="-1"></a><span class="at">@triton.jit</span></span>
+<span id="annotated-cell-9-2"><a href="#annotated-cell-9-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_weights_v1(</span>
+<span id="annotated-cell-9-3"><a href="#annotated-cell-9-3" aria-hidden="true" tabindex="-1"></a>    weights_ptr, weights_quant_ptr, weights_code_ptr,</span>
+<span id="annotated-cell-9-4"><a href="#annotated-cell-9-4" aria-hidden="true" tabindex="-1"></a>    absmax_quant_ptr, absmax_code_ptr, absmax_scale_ptr, absmax_mean,</span>
+<span id="annotated-cell-9-5"><a href="#annotated-cell-9-5" aria-hidden="true" tabindex="-1"></a>    blocksize_weights, blocksize_absmax, numel_weights, numel_absmax,</span>
+<span id="annotated-cell-9-6"><a href="#annotated-cell-9-6" aria-hidden="true" tabindex="-1"></a>):</span>
+<span id="annotated-cell-9-7"><a href="#annotated-cell-9-7" aria-hidden="true" tabindex="-1"></a>    offsets <span class="op">=</span> tl.program_id(<span class="dv">0</span>) <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, BLOCK_SIZE)</span>
+<span id="annotated-cell-9-8"><a href="#annotated-cell-9-8" aria-hidden="true" tabindex="-1"></a></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-9" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-9-9" class="code-annotation-target"><a href="#annotated-cell-9-9" aria-hidden="true" tabindex="-1"></a>    absmax_offset <span class="op">=</span> offsets <span class="op">//</span> blocksize_weights</span>
+<span id="annotated-cell-9-10"><a href="#annotated-cell-9-10" aria-hidden="true" tabindex="-1"></a>    absmax_quant <span class="op">=</span> tl.load(absmax_quant_ptr <span class="op">+</span> absmax_offset)</span>
+<span id="annotated-cell-9-11"><a href="#annotated-cell-9-11" aria-hidden="true" tabindex="-1"></a>    absmax_code <span class="op">=</span> tl.load(absmax_code_ptr <span class="op">+</span> absmax_quant)</span>
+<span id="annotated-cell-9-12"><a href="#annotated-cell-9-12" aria-hidden="true" tabindex="-1"></a></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-9" data-target-annotation="2" onclick="event.preventDefault();">2</a><span id="annotated-cell-9-13" class="code-annotation-target"><a href="#annotated-cell-9-13" aria-hidden="true" tabindex="-1"></a>    absmax_scale_offsets <span class="op">=</span> offsets <span class="op">//</span> blocksize_weights <span class="op">//</span> blocksize_absmax</span>
+<span id="annotated-cell-9-14"><a href="#annotated-cell-9-14" aria-hidden="true" tabindex="-1"></a>    absmax_scale <span class="op">=</span> tl.load(absmax_scale_ptr <span class="op">+</span> absmax_scale_offsets)</span>
+<span id="annotated-cell-9-15"><a href="#annotated-cell-9-15" aria-hidden="true" tabindex="-1"></a></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-9" data-target-annotation="3" onclick="event.preventDefault();">3</a><span id="annotated-cell-9-16" class="code-annotation-target"><a href="#annotated-cell-9-16" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> absmax_code <span class="op">*</span> absmax_scale <span class="op">+</span> absmax_mean</span>
+<span id="annotated-cell-9-17"><a href="#annotated-cell-9-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-9-18"><a href="#annotated-cell-9-18" aria-hidden="true" tabindex="-1"></a>    weights_quant <span class="op">=</span> tl.load(weights_quant_ptr <span class="op">+</span> input_offset)</span>
+<span id="annotated-cell-9-19"><a href="#annotated-cell-9-19" aria-hidden="true" tabindex="-1"></a>    weights_first <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&gt;&gt;</span> <span class="dv">4</span>)) <span class="op">*</span> absmax</span>
+<span id="annotated-cell-9-20"><a href="#annotated-cell-9-20" aria-hidden="true" tabindex="-1"></a>    weights_second <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&amp;</span> <span class="bn">0xF</span>)) <span class="op">*</span> absmax</span>
+<span id="annotated-cell-9-21"><a href="#annotated-cell-9-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-9-22"><a href="#annotated-cell-9-22" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> input_offsets <span class="op">*</span> <span class="dv">2</span>, weights_first)</span>
+<span id="annotated-cell-9-23"><a href="#annotated-cell-9-23" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> input_offsets <span class="op">*</span> <span class="dv">2</span> <span class="op">+</span> <span class="dv">1</span>, weights_second)</span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<dl class="code-annotation-container-grid">
+<dt data-target-cell="annotated-cell-9" data-target-annotation="1">1</dt>
+<dd>
+<span data-code-cell="annotated-cell-9" data-code-lines="9" data-code-annotation="1">each set of 64 weights shared the absmax</span>
+</dd>
+<dt data-target-cell="annotated-cell-9" data-target-annotation="2">2</dt>
+<dd>
+<span data-code-cell="annotated-cell-9" data-code-lines="13" data-code-annotation="2">Pointer arithmetic - double strided index is required for the scale of the absmax.</span>
+</dd>
+<dt data-target-cell="annotated-cell-9" data-target-annotation="3">3</dt>
+<dd>
+<span data-code-cell="annotated-cell-9" data-code-lines="16" data-code-annotation="3">Here we <em>do</em> add the mean inside the kernel.</span>
+</dd>
+</dl>
+<p>Not much of an improvement here unfortunately, we will have to profile the kernel a bit to see what’s up.</p>
+<div class="quarto-figure quarto-figure-left">
+<figure class="figure">
+<p><img src="img/NF4_Dequantization_Performance_T4_GPU_Triton V1.png" class="img-fluid quarto-figure quarto-figure-left figure-img"></p>
+<figcaption>A fused kernel does not seem to improve much.</figcaption>
+</figure>
+</div>
+</section>
+<section id="on-coalescing-memory-access" class="level1 page-columns page-full">
+<h1>On Coalescing Memory Access</h1>
+<p>Let’s address the point raised earlier on the interleaved storage we perform. The pattern we use for storage of the weights in both V0 and V1 is as follows:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>weights_first[<span class="dv">0</span>] <span class="op">-&gt;</span> mem[<span class="dv">0</span>]</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>weights_first[<span class="dv">1</span>] <span class="op">-&gt;</span> mem[<span class="dv">2</span>]</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>weights_first[<span class="dv">2</span>] <span class="op">-&gt;</span> mem[<span class="dv">4</span>]</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>weights_first[<span class="dv">3</span>] <span class="op">-&gt;</span> mem[<span class="dv">6</span>]</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>weights_second[<span class="dv">1</span>] <span class="op">-&gt;</span> mem[<span class="dv">1</span>]</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>weights_second[<span class="dv">3</span>] <span class="op">-&gt;</span> mem[<span class="dv">3</span>]</span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>weights_second[<span class="dv">5</span>] <span class="op">-&gt;</span> mem[<span class="dv">5</span>]</span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>weights_second[<span class="dv">7</span>] <span class="op">-&gt;</span> mem[<span class="dv">7</span>]</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<p>This interleaved pattern represents poor memory coalescing, which impacts performance.</p>
+<p>Anything working on the GPU is created to access blocks of contiguous memory, this counts for CUDA and Triton. If your kernel can read/write in contiguous blocks (like <code>weights_first[0:32] -&gt; mem[0:32]</code>), access is <em>coalesced</em> and the kernel can take maximum advantage of bandwidth available. If instead the storage has to be done in parts, we are under utilizing bandwidth and have poor memory coalescing.</p>
+<p>An ideal pattern would store data contiguously: <code>weights_first[0:K] -&gt; mem[0:K]</code> for as large an <code>K</code> as possible!</p>
+<p>We can actually see this issue raised in Nsight Compute<a href="#fn9" class="footnote-ref" id="fnref9" role="doc-noteref"><sup>9</sup></a> too:</p>
+<div class="no-row-height column-margin column-container"><p><sup>9</sup>&nbsp;We use the following to profile the kernel:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">ncu</span> <span class="at">--target-processes</span> all </span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--set</span> detailed </span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--import-source</span> yes </span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> SchedulerStats </span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> WarpStateStats </span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> SpeedOfLight_RooflineChart </span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> SpeedOfLight_HierarchicalTensorRooflineChart </span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>  <span class="ex">-o</span> v1_profile </span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>  <span class="ex">python</span> profile_kernel_v1.py</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div><p><img src="img/nsight_v1.png" class="img-fluid"></p>
+<p>The kernel suffers from high warp stall percentages (14.84% and 12.03%) at the final two <code>tl.store</code> operation. The other thing we notice is the “Global Excessive” metric at 50.00% for these store operations, both of which are <strong>indicating inefficient memory access patterns</strong>.</p>
+<p>Let’s think of some way to un-interleave the weights before storing in kernel V2.</p>
+</section>
+<section id="attempt-2-same-approach-but-tl.join-the-weights" class="level1">
+<h1>Attempt 2: Same Approach, but <code>tl.join</code> the Weights</h1>
+<p>I looked around quite a bit in the Triton docs and we have some stuff to work with. Namely, <a href="https://github.com/triton-lang/triton/blob/main/python/triton/language/semantic.py#L688-L710"><code>tl.join</code></a> seems to exactly what we want, interleave two tensors into one. It will leave us with a 2D block, which we can simply reshape to a contiguous representation of the weights. In code:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span>w_interleaved <span class="op">=</span> tl.interleave(</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>   [w0, w2, w4],</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>   [w1, w3, w5] </span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span>w_interleaved</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>[[w0, w1],</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a> [w2, w3],</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a> [w4, w5]]</span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span>w_out <span class="op">=</span> tl.reshape(w_interleaved, <span class="op">-</span><span class="dv">1</span>)</span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span>w_out</span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>[w0, w1, w2, w3, w4, w5]</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<p>Now for rewriting V1:</p>
+<div class="sourceCode" id="annotated-cell-12"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-12-1"><a href="#annotated-cell-12-1" aria-hidden="true" tabindex="-1"></a><span class="at">@triton.jit</span></span>
+<span id="annotated-cell-12-2"><a href="#annotated-cell-12-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_weights_v1(</span>
+<span id="annotated-cell-12-3"><a href="#annotated-cell-12-3" aria-hidden="true" tabindex="-1"></a>    weights_ptr, weights_quant_ptr, weights_code_ptr,</span>
+<span id="annotated-cell-12-4"><a href="#annotated-cell-12-4" aria-hidden="true" tabindex="-1"></a>    absmax_quant_ptr, absmax_code_ptr, absmax_scale_ptr, absmax_mean,</span>
+<span id="annotated-cell-12-5"><a href="#annotated-cell-12-5" aria-hidden="true" tabindex="-1"></a>    blocksize_weights, blocksize_absmax, numel_weights, numel_absmax,</span>
+<span id="annotated-cell-12-6"><a href="#annotated-cell-12-6" aria-hidden="true" tabindex="-1"></a>):</span>
+<span id="annotated-cell-12-7"><a href="#annotated-cell-12-7" aria-hidden="true" tabindex="-1"></a>    offsets <span class="op">=</span> tl.program_id(<span class="dv">0</span>) <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, BLOCK_SIZE)</span>
+<span id="annotated-cell-12-8"><a href="#annotated-cell-12-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-12-9"><a href="#annotated-cell-12-9" aria-hidden="true" tabindex="-1"></a>    absmax_offset <span class="op">=</span> offsets <span class="op">//</span> blocksize_weights</span>
+<span id="annotated-cell-12-10"><a href="#annotated-cell-12-10" aria-hidden="true" tabindex="-1"></a>    absmax_quant <span class="op">=</span> tl.load(absmax_quant_ptr <span class="op">+</span> absmax_offset)</span>
+<span id="annotated-cell-12-11"><a href="#annotated-cell-12-11" aria-hidden="true" tabindex="-1"></a>    absmax_code <span class="op">=</span> tl.load(absmax_code_ptr <span class="op">+</span> absmax_quant)</span>
+<span id="annotated-cell-12-12"><a href="#annotated-cell-12-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-12-13"><a href="#annotated-cell-12-13" aria-hidden="true" tabindex="-1"></a>    absmax_scale_offsets <span class="op">=</span> offsets <span class="op">//</span> blocksize_weights <span class="op">//</span> blocksize_absmax</span>
+<span id="annotated-cell-12-14"><a href="#annotated-cell-12-14" aria-hidden="true" tabindex="-1"></a>    absmax_scale <span class="op">=</span> tl.load(absmax_scale_ptr <span class="op">+</span> absmax_scale_offsets)</span>
+<span id="annotated-cell-12-15"><a href="#annotated-cell-12-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-12-16"><a href="#annotated-cell-12-16" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> absmax_code <span class="op">*</span> absmax_scale <span class="op">+</span> absmax_mean</span>
+<span id="annotated-cell-12-17"><a href="#annotated-cell-12-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-12-18"><a href="#annotated-cell-12-18" aria-hidden="true" tabindex="-1"></a>    weights_quant <span class="op">=</span> tl.load(weights_quant_ptr <span class="op">+</span> input_offset)</span>
+<span id="annotated-cell-12-19"><a href="#annotated-cell-12-19" aria-hidden="true" tabindex="-1"></a>    weights_first <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&gt;&gt;</span> <span class="dv">4</span>)) <span class="op">*</span> absmax</span>
+<span id="annotated-cell-12-20"><a href="#annotated-cell-12-20" aria-hidden="true" tabindex="-1"></a>    weights_second <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&amp;</span> <span class="bn">0xF</span>)) <span class="op">*</span> absmax</span>
+<span id="annotated-cell-12-21"><a href="#annotated-cell-12-21" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="annotated-cell-12-22"><a href="#annotated-cell-12-22" aria-hidden="true" tabindex="-1"></a>    weights <span class="op">=</span> tl.reshape(</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-12" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-12-23" class="code-annotation-target"><a href="#annotated-cell-12-23" aria-hidden="true" tabindex="-1"></a>        tl.interleave(weights_first, weights_second), <span class="dv">2</span> <span class="op">*</span> BLOCK_SIZE</span>
+<span id="annotated-cell-12-24"><a href="#annotated-cell-12-24" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="annotated-cell-12-25"><a href="#annotated-cell-12-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-12-26"><a href="#annotated-cell-12-26" aria-hidden="true" tabindex="-1"></a>    output_offset <span class="op">=</span> (</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-12" data-target-annotation="2" onclick="event.preventDefault();">2</a><span id="annotated-cell-12-27" class="code-annotation-target"><a href="#annotated-cell-12-27" aria-hidden="true" tabindex="-1"></a>      tl.program_id(<span class="dv">0</span>) <span class="op">*</span> <span class="dv">2</span> <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, <span class="dv">2</span> <span class="op">*</span> BLOCK_SIZE)</span>
+<span id="annotated-cell-12-28"><a href="#annotated-cell-12-28" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="annotated-cell-12-29"><a href="#annotated-cell-12-29" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> output_offset, weights)</span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<dl class="code-annotation-container-grid">
+<dt data-target-cell="annotated-cell-12" data-target-annotation="1">1</dt>
+<dd>
+<span data-code-cell="annotated-cell-12" data-code-lines="23" data-code-annotation="1">Perform the interleave-reshape operations.</span>
+</dd>
+<dt data-target-cell="annotated-cell-12" data-target-annotation="2">2</dt>
+<dd>
+<span data-code-cell="annotated-cell-12" data-code-lines="27" data-code-annotation="2">Adjust the output position since we can now do a single store.</span>
+</dd>
+</dl>
+<p>Great, we see below that we can actually outperform the CUDA implementation by a wide margin, and that the margin grows with larger input sizes.</p>
+<div class="quarto-figure quarto-figure-left">
+<figure class="figure">
+<p><img src="img/NF4_Dequantization_Performance_T4_GPU_Triton V2.png" class="img-fluid quarto-figure quarto-figure-left figure-img"></p>
+<figcaption>Success! Triton V2 outperforms CUDA by a nice margin.</figcaption>
+</figure>
+</div>
+</section>
+<section id="attempt-3-a-different-memory-coalesced-kernel" class="level1">
+<h1>Attempt 3: A Different Memory Coalesced Kernel</h1>
+<p>At this point I was satisified with the kernel, but wanted to see what other dequantization kernels did. There is no reference for the NF4 dequant kernel in Triton available elsewhere, but plenty of approaches that use bit packed tensors. As an example, there is a <a href="https://pytorch.org/blog/accelerating-triton/">PyTorch Post</a> on GPTQ dequantization, although here the dequantization is done inside of a matmul kernel.</p>
+<p>A more annotated version can be seen in <a href="https://github.com/mobiusml/gemlite/blob/master/gemlite/triton_kernels/gemm_A16fWnO16f_int32packing.py">gemlite</a>. The kernel <a href="https://github.com/mobiusml/gemlite/blob/master/gemlite/triton_kernels/gemm_A16fWnO16f_int32packing.py#L203">loads the weights double</a> (for a 2-packed uint8), creates a <a href="https://github.com/mobiusml/gemlite/blob/master/gemlite/triton_kernels/gemm_A16fWnO16f_int32packing.py#L206">shift</a> that only operates on every other element, and <a href="https://github.com/mobiusml/gemlite/blob/master/gemlite/triton_kernels/utils.py#L26">masks</a> every element as we usually do to keep the 4 least significant bits.</p>
+<p>I’ve implemented the same in the kernel below.</p>
+<div class="sourceCode" id="annotated-cell-13"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-13-1"><a href="#annotated-cell-13-1" aria-hidden="true" tabindex="-1"></a><span class="at">@triton.jit</span></span>
+<span id="annotated-cell-13-2"><a href="#annotated-cell-13-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_weights_v1(</span>
+<span id="annotated-cell-13-3"><a href="#annotated-cell-13-3" aria-hidden="true" tabindex="-1"></a>    weights_ptr, weights_quant_ptr, weights_code_ptr,</span>
+<span id="annotated-cell-13-4"><a href="#annotated-cell-13-4" aria-hidden="true" tabindex="-1"></a>    absmax_quant_ptr, absmax_code_ptr, absmax_scale_ptr, absmax_mean,</span>
+<span id="annotated-cell-13-5"><a href="#annotated-cell-13-5" aria-hidden="true" tabindex="-1"></a>    blocksize_weights, blocksize_absmax, numel_weights, numel_absmax,</span>
+<span id="annotated-cell-13-6"><a href="#annotated-cell-13-6" aria-hidden="true" tabindex="-1"></a>):</span>
+<span id="annotated-cell-13-7"><a href="#annotated-cell-13-7" aria-hidden="true" tabindex="-1"></a>    offsets <span class="op">=</span> tl.program_id(<span class="dv">0</span>) <span class="op">*</span> <span class="dv">2</span> <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, <span class="dv">2</span> <span class="op">*</span> BLOCK_SIZE)</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-13" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-13-8" class="code-annotation-target"><a href="#annotated-cell-13-8" aria-hidden="true" tabindex="-1"></a>    double_offsets <span class="op">=</span> offsets <span class="op">//</span> <span class="dv">2</span></span>
+<span id="annotated-cell-13-9"><a href="#annotated-cell-13-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-13-10"><a href="#annotated-cell-13-10" aria-hidden="true" tabindex="-1"></a>    absmax_offset <span class="op">=</span> double_offsets <span class="op">//</span> blocksize_weights</span>
+<span id="annotated-cell-13-11"><a href="#annotated-cell-13-11" aria-hidden="true" tabindex="-1"></a>    absmax_quant <span class="op">=</span> tl.load(absmax_quant_ptr <span class="op">+</span> absmax_offset)</span>
+<span id="annotated-cell-13-12"><a href="#annotated-cell-13-12" aria-hidden="true" tabindex="-1"></a>    absmax_code <span class="op">=</span> tl.load(absmax_code_ptr <span class="op">+</span> absmax_quant)</span>
+<span id="annotated-cell-13-13"><a href="#annotated-cell-13-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-13-14"><a href="#annotated-cell-13-14" aria-hidden="true" tabindex="-1"></a>    absmax_scale_offsets <span class="op">=</span> double_offsets <span class="op">//</span> blocksize_weights <span class="op">//</span> blocksize_absmax</span>
+<span id="annotated-cell-13-15"><a href="#annotated-cell-13-15" aria-hidden="true" tabindex="-1"></a>    absmax_scale <span class="op">=</span> tl.load(absmax_scale_ptr <span class="op">+</span> absmax_scale_offsets)</span>
+<span id="annotated-cell-13-16"><a href="#annotated-cell-13-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-13-17"><a href="#annotated-cell-13-17" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> absmax_code <span class="op">*</span> absmax_scale <span class="op">+</span> absmax_mean</span>
+<span id="annotated-cell-13-18"><a href="#annotated-cell-13-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-13-19"><a href="#annotated-cell-13-19" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Since the weights here are duplicated ([w0, w0, w1, w1]) we unpack by masking</span></span>
+<span id="annotated-cell-13-20"><a href="#annotated-cell-13-20" aria-hidden="true" tabindex="-1"></a>    <span class="co"># in a local OR based on index.</span></span>
+<span id="annotated-cell-13-21"><a href="#annotated-cell-13-21" aria-hidden="true" tabindex="-1"></a>    packed_weights <span class="op">=</span> tl.load(weights_quant_ptr <span class="op">+</span> double_offset, mask<span class="op">=</span>double_mask)</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-13" data-target-annotation="2" onclick="event.preventDefault();">2</a><span id="annotated-cell-13-22" class="code-annotation-target"><a href="#annotated-cell-13-22" aria-hidden="true" tabindex="-1"></a>    shift <span class="op">=</span> tl.where((logical_offset <span class="op">%</span> <span class="dv">2</span>) <span class="op">==</span> <span class="dv">0</span>, <span class="dv">4</span>, <span class="dv">0</span>)</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-13" data-target-annotation="3" onclick="event.preventDefault();">3</a><span id="annotated-cell-13-23" class="code-annotation-target"><a href="#annotated-cell-13-23" aria-hidden="true" tabindex="-1"></a>    unpacked_bits <span class="op">=</span> (packed_weights <span class="op">&gt;&gt;</span> shift) <span class="op">&amp;</span> <span class="bn">0x0F</span></span>
+<span id="annotated-cell-13-24"><a href="#annotated-cell-13-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-13-25"><a href="#annotated-cell-13-25" aria-hidden="true" tabindex="-1"></a>    weights <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> unpacked_bits) <span class="op">*</span> absmax</span>
+<span id="annotated-cell-13-26"><a href="#annotated-cell-13-26" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> logical_offset, weights, mask<span class="op">=</span>logical_mask)</span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<dl class="code-annotation-container-grid">
+<dt data-target-cell="annotated-cell-13" data-target-annotation="1">1</dt>
+<dd>
+<span data-code-cell="annotated-cell-13" data-code-lines="8" data-code-annotation="1">load the same weight twice [0, 1, 2, …] -&gt; [0, 0, 1, 1, 2, …]. This also mans we end up loading less weights in general for a given call.</span>
+</dd>
+<dt data-target-cell="annotated-cell-13" data-target-annotation="2">2</dt>
+<dd>
+<span data-code-cell="annotated-cell-13" data-code-lines="22" data-code-annotation="2">Shift only every other element ([0, <em>0</em>, 1, <em>1</em>, …]).</span>
+</dd>
+<dt data-target-cell="annotated-cell-13" data-target-annotation="3">3</dt>
+<dd>
+<span data-code-cell="annotated-cell-13" data-code-lines="23" data-code-annotation="3">Apply the boolean mask to keep the least significant 4 bits only.</span>
+</dd>
+</dl>
+<p>Unfortunately, this approach seems to slightly underperform. The kernel is exact, so I doubt the implementation has an issue, maybe the join-reshape kernel is faster? It might be worth exploring this approach in existing low-bit dequantization kernels if that is the case.</p>
+<div class="quarto-figure quarto-figure-left">
+<figure class="figure">
+<p><img src="img/NF4_Dequantization_Performance_T4_GPU_Triton V3.png" class="img-fluid quarto-figure quarto-figure-left figure-img"></p>
+<figcaption>The alternative approach to memory coalescing seems to underperform!</figcaption>
+</figure>
+</div>
+</section>
+<section id="recap" class="level1">
+<h1>Recap</h1>
+<p>Another way to picture the gains is by measuring the speedup relative to <code>bitsandbytes</code>, done below. We see an average speedup factor of about 1.6X, with a peak at 1.8x for larger model shapes.</p>
+<p><img src="img/speedup.png" class="img-fluid"></p>
+<p>The only unfortunate thing is that I could not test the dequantization for bf16, since the T4 GPUs are sm75 and bfloat16 support in Triton starts at sm80+ GPUs. Although I guess that testing it on higher end GPUs would also somewhat defeat the purpose.</p>
+<p>Let’s talk a bit about what did <em>not</em> help performance, since I tried a lot of Triton tricks here</p>
+<p>First. I implemented a fourth kernel which uses a grid-strided loop. This had no effects, and it’s speed was the same as the V3 kernel (it was based on the V3 unpacking approach). When I checked the autotune settings what the favorable BLOCK_STRIDE was, it ended up being BLOCK_SIZE, meaning that the kernel’s best performance was found with no for loop.</p>
+<p>Second. Some other tricks I tried were based on <a href="https://triton-lang.org/main/python-api/triton.language.html#compiler-hint-ops">Compiler Hints</a>. <code>max_contiguous</code> could be used only for kernel V2 and V0 which load the weights linearly, but we did not see a big speedup in performance. I tried loading in different orders, with different load options, but nothing really improved performance - could be a GPU poor issue, but QLoRA is a GPU poor approach anyway.</p>
+
+
+</section>
+
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+window.document.addEventListener("DOMContentLoaded", function (event) {
+  const toggleBodyColorMode = (bsSheetEl) => {
+    const mode = bsSheetEl.getAttribute("data-mode");
+    const bodyEl = window.document.querySelector("body");
+    if (mode === "dark") {
+      bodyEl.classList.add("quarto-dark");
+      bodyEl.classList.remove("quarto-light");
+    } else {
+      bodyEl.classList.add("quarto-light");
+      bodyEl.classList.remove("quarto-dark");
+    }
+  }
+  const toggleBodyColorPrimary = () => {
+    const bsSheetEl = window.document.querySelector("link#quarto-bootstrap");
+    if (bsSheetEl) {
+      toggleBodyColorMode(bsSheetEl);
+    }
+  }
+  toggleBodyColorPrimary();  
+  const icon = "";
+  const anchorJS = new window.AnchorJS();
+  anchorJS.options = {
+    placement: 'right',
+    icon: icon
+  };
+  anchorJS.add('.anchored');
+  const isCodeAnnotation = (el) => {
+    for (const clz of el.classList) {
+      if (clz.startsWith('code-annotation-')) {                     
+        return true;
+      }
+    }
+    return false;
+  }
+  const clipboard = new window.ClipboardJS('.code-copy-button', {
+    text: function(trigger) {
+      const codeEl = trigger.previousElementSibling.cloneNode(true);
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+  });
+  clipboard.on('success', function(e) {
+    // button target
+    const button = e.trigger;
+    // don't keep focus
+    button.blur();
+    // flash "checked"
+    button.classList.add('code-copy-button-checked');
+    var currentTitle = button.getAttribute("title");
+    button.setAttribute("title", "Copied!");
+    let tooltip;
+    if (window.bootstrap) {
+      button.setAttribute("data-bs-toggle", "tooltip");
+      button.setAttribute("data-bs-placement", "left");
+      button.setAttribute("data-bs-title", "Copied!");
+      tooltip = new bootstrap.Tooltip(button, 
+        { trigger: "manual", 
+          customClass: "code-copy-button-tooltip",
+          offset: [0, -8]});
+      tooltip.show();    
+    }
+    setTimeout(function() {
+      if (tooltip) {
+        tooltip.hide();
+        button.removeAttribute("data-bs-title");
+        button.removeAttribute("data-bs-toggle");
+        button.removeAttribute("data-bs-placement");
+      }
+      button.setAttribute("title", currentTitle);
+      button.classList.remove('code-copy-button-checked');
+    }, 1000);
+    // clear code selection
+    e.clearSelection();
+  });
+  function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+    const config = {
+      allowHTML: true,
+      maxWidth: 500,
+      delay: 100,
+      arrow: false,
+      appendTo: function(el) {
+          return el.parentElement;
+      },
+      interactive: true,
+      interactiveBorder: 10,
+      theme: 'quarto',
+      placement: 'bottom-start',
+    };
+    if (contentFn) {
+      config.content = contentFn;
+    }
+    if (onTriggerFn) {
+      config.onTrigger = onTriggerFn;
+    }
+    if (onUntriggerFn) {
+      config.onUntrigger = onUntriggerFn;
+    }
+    window.tippy(el, config); 
+  }
+  const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+  for (var i=0; i<noterefs.length; i++) {
+    const ref = noterefs[i];
+    tippyHover(ref, function() {
+      // use id or data attribute instead here
+      let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+      try { href = new URL(href).hash; } catch {}
+      const id = href.replace(/^#\/?/, "");
+      const note = window.document.getElementById(id);
+      return note.innerHTML;
+    });
+  }
+  const xrefs = window.document.querySelectorAll('a.quarto-xref');
+  const processXRef = (id, note) => {
+    // Strip column container classes
+    const stripColumnClz = (el) => {
+      el.classList.remove("page-full", "page-columns");
+      if (el.children) {
+        for (const child of el.children) {
+          stripColumnClz(child);
+        }
+      }
+    }
+    stripColumnClz(note)
+    if (id === null || id.startsWith('sec-')) {
+      // Special case sections, only their first couple elements
+      const container = document.createElement("div");
+      if (note.children && note.children.length > 2) {
+        container.appendChild(note.children[0].cloneNode(true));
+        for (let i = 1; i < note.children.length; i++) {
+          const child = note.children[i];
+          if (child.tagName === "P" && child.innerText === "") {
+            continue;
+          } else {
+            container.appendChild(child.cloneNode(true));
+            break;
+          }
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(container);
+        }
+        return container.innerHTML
+      } else {
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        return note.innerHTML;
+      }
+    } else {
+      // Remove any anchor links if they are present
+      const anchorLink = note.querySelector('a.anchorjs-link');
+      if (anchorLink) {
+        anchorLink.remove();
+      }
+      if (window.Quarto?.typesetMath) {
+        window.Quarto.typesetMath(note);
+      }
+      // TODO in 1.5, we should make sure this works without a callout special case
+      if (note.classList.contains("callout")) {
+        return note.outerHTML;
+      } else {
+        return note.innerHTML;
+      }
+    }
+  }
+  for (var i=0; i<xrefs.length; i++) {
+    const xref = xrefs[i];
+    tippyHover(xref, undefined, function(instance) {
+      instance.disable();
+      let url = xref.getAttribute('href');
+      let hash = undefined; 
+      if (url.startsWith('#')) {
+        hash = url;
+      } else {
+        try { hash = new URL(url).hash; } catch {}
+      }
+      if (hash) {
+        const id = hash.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note !== null) {
+          try {
+            const html = processXRef(id, note.cloneNode(true));
+            instance.setContent(html);
+          } finally {
+            instance.enable();
+            instance.show();
+          }
+        } else {
+          // See if we can fetch this
+          fetch(url.split('#')[0])
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.getElementById(id);
+            if (note !== null) {
+              const html = processXRef(id, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      } else {
+        // See if we can fetch a full url (with no hash to target)
+        // This is a special case and we should probably do some content thinning / targeting
+        fetch(url)
+        .then(res => res.text())
+        .then(html => {
+          const parser = new DOMParser();
+          const htmlDoc = parser.parseFromString(html, "text/html");
+          const note = htmlDoc.querySelector('main.content');
+          if (note !== null) {
+            // This should only happen for chapter cross references
+            // (since there is no id in the URL)
+            // remove the first header
+            if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+              note.children[0].remove();
+            }
+            const html = processXRef(null, note);
+            instance.setContent(html);
+          } 
+        }).finally(() => {
+          instance.enable();
+          instance.show();
+        });
+      }
+    }, function(instance) {
+    });
+  }
+      let selectedAnnoteEl;
+      const selectorForAnnotation = ( cell, annotation) => {
+        let cellAttr = 'data-code-cell="' + cell + '"';
+        let lineAttr = 'data-code-annotation="' +  annotation + '"';
+        const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+        return selector;
+      }
+      const selectCodeLines = (annoteEl) => {
+        const doc = window.document;
+        const targetCell = annoteEl.getAttribute("data-target-cell");
+        const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+        const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+        const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+        const lineIds = lines.map((line) => {
+          return targetCell + "-" + line;
+        })
+        let top = null;
+        let height = null;
+        let parent = null;
+        if (lineIds.length > 0) {
+            //compute the position of the single el (top and bottom and make a div)
+            const el = window.document.getElementById(lineIds[0]);
+            top = el.offsetTop;
+            height = el.offsetHeight;
+            parent = el.parentElement.parentElement;
+          if (lineIds.length > 1) {
+            const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+            const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+            height = bottom - top;
+          }
+          if (top !== null && height !== null && parent !== null) {
+            // cook up a div (if necessary) and position it 
+            let div = window.document.getElementById("code-annotation-line-highlight");
+            if (div === null) {
+              div = window.document.createElement("div");
+              div.setAttribute("id", "code-annotation-line-highlight");
+              div.style.position = 'absolute';
+              parent.appendChild(div);
+            }
+            div.style.top = top - 2 + "px";
+            div.style.height = height + 4 + "px";
+            div.style.left = 0;
+            let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+            if (gutterDiv === null) {
+              gutterDiv = window.document.createElement("div");
+              gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+              gutterDiv.style.position = 'absolute';
+              const codeCell = window.document.getElementById(targetCell);
+              const gutter = codeCell.querySelector('.code-annotation-gutter');
+              gutter.appendChild(gutterDiv);
+            }
+            gutterDiv.style.top = top - 2 + "px";
+            gutterDiv.style.height = height + 4 + "px";
+          }
+          selectedAnnoteEl = annoteEl;
+        }
+      };
+      const unselectCodeLines = () => {
+        const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+        elementsIds.forEach((elId) => {
+          const div = window.document.getElementById(elId);
+          if (div) {
+            div.remove();
+          }
+        });
+        selectedAnnoteEl = undefined;
+      };
+        // Handle positioning of the toggle
+    window.addEventListener(
+      "resize",
+      throttle(() => {
+        elRect = undefined;
+        if (selectedAnnoteEl) {
+          selectCodeLines(selectedAnnoteEl);
+        }
+      }, 10)
+    );
+    function throttle(fn, ms) {
+    let throttle = false;
+    let timer;
+      return (...args) => {
+        if(!throttle) { // first call gets through
+            fn.apply(this, args);
+            throttle = true;
+        } else { // all the others get throttled
+            if(timer) clearTimeout(timer); // cancel #2
+            timer = setTimeout(() => {
+              fn.apply(this, args);
+              timer = throttle = false;
+            }, ms);
+        }
+      };
+    }
+      // Attach click handler to the DT
+      const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+      for (const annoteDlNode of annoteDls) {
+        annoteDlNode.addEventListener('click', (event) => {
+          const clickedEl = event.target;
+          if (clickedEl !== selectedAnnoteEl) {
+            unselectCodeLines();
+            const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+            if (activeEl) {
+              activeEl.classList.remove('code-annotation-active');
+            }
+            selectCodeLines(clickedEl);
+            clickedEl.classList.add('code-annotation-active');
+          } else {
+            // Unselect the line
+            unselectCodeLines();
+            clickedEl.classList.remove('code-annotation-active');
+          }
+        });
+      }
+  const findCites = (el) => {
+    const parentEl = el.parentElement;
+    if (parentEl) {
+      const cites = parentEl.dataset.cites;
+      if (cites) {
+        return {
+          el,
+          cites: cites.split(' ')
+        };
+      } else {
+        return findCites(el.parentElement)
+      }
+    } else {
+      return undefined;
+    }
+  };
+  var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+  for (var i=0; i<bibliorefs.length; i++) {
+    const ref = bibliorefs[i];
+    const citeInfo = findCites(ref);
+    if (citeInfo) {
+      tippyHover(citeInfo.el, function() {
+        var popup = window.document.createElement('div');
+        citeInfo.cites.forEach(function(cite) {
+          var citeDiv = window.document.createElement('div');
+          citeDiv.classList.add('hanging-indent');
+          citeDiv.classList.add('csl-entry');
+          var biblioDiv = window.document.getElementById('ref-' + cite);
+          if (biblioDiv) {
+            citeDiv.innerHTML = biblioDiv.innerHTML;
+          }
+          popup.appendChild(citeDiv);
+        });
+        return popup.innerHTML;
+      });
+    }
+  }
+});
+</script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>
