@@ -275,27 +275,6 @@ Fleshing point 2 out a bit more, we can load a block of the weights, get the cor
 The more I write this the more I think that there is a lot of locality referencing going on with the absmax, even if the dequantization itself is just an elementwise operation.
 The only downside I see is that we probably will dequantize the same absmax several times.
 
-# Benchmarking and Profiling
-Benchmarking and profiling was done on T4 GPUs, which are sm75 GPUs meaning that Triton will not handle bfloat16 operations.
-
-All kernels will be profiled using Nsight Compute on 8192 by 32768 sizes matrices, representing a linear layer in the MLP for LLaMA 70B models.
-The shape technically doesn't matter though since dequantization is a linear operation.
-
-```bash
-ncu --target-processes all 
-  --set detailed 
-  --import-source yes 
-  --section SchedulerStats 
-  --section WarpStateStats 
-  --section SpeedOfLight_RooflineChart 
-  --section SpeedOfLight_HierarchicalTensorRooflineChart 
-  -o output_file_location 
-  python vector_add.py
-```
-
-We will also benchmark a variety of sizes from 7B to 70B LLaMA models using Triton's [Benchmark](https://triton-lang.org/main/python-api/generated/triton.testing.Benchmark.html) functionality to test how fast the resulting kernels are for increasing shapes.
-
-
 
 # Attempt 0: Writing Two Kernels
 As a baseline, let's attempt to just translate the two CUDA Kernels into two Triton kernels.
