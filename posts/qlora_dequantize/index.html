@@ -199,7 +199,7 @@ window.Quarto = {
 
 
 <p>Unsloth <a href="https://colab.research.google.com/drive/1JqKqA1XWeLHvnYAc0wzrR4JBCnq43HyH?usp=sharing#scrollTo=QoE2DGRZG2Ng">has released</a> a list of some challenging tasks related to PyTorch and parameter efficient fine-tuning. One of the challenges was writing a Triton kernel for dequantizing QLoRA NF4 quantized weights. I thought it would be a fun challenge on a technical level to go beyond tutorial-like kernels for softmax and matrix multiplications<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>.</p>
-<div class="no-row-height column-margin column-container"><p><sup>1</sup>&nbsp;if you actually have suggestions for kernels I would love to hear them.</p><p><sup>2</sup>&nbsp;Code can be found <a href="https://github.com/lweitkamp/nf4_triton">on GitHub</a> which has all Triton kernels implemented and a benchmark notebook.</p></div><p>In this post<a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a>, I’ll walk through the process of converting CUDA code to Triton and share how I achieved performance improvements of up to 1.6X to 1.8X for LLaMA models ranging from 6B to 65B parameters. Notably, the speed gains from my implementation increase as model size scales up, making this approach particularly valuable for larger models — which is basically the intended use for QLoRA.</p>
+<div class="no-row-height column-margin column-container"><p><sup>1</sup>&nbsp;if you actually have suggestions for kernels I would love to hear them.</p><p><sup>2</sup>&nbsp;Code can be found <a href="https://github.com/lweitkamp/qlora_dequantize_triton">on GitHub</a> which has all Triton kernels implemented and a benchmark notebook.</p></div><p>In this post<a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a>, I’ll walk through the process of converting CUDA code to Triton and share how I achieved performance improvements of up to 1.6X to 1.8X for LLaMA models ranging from 6B to 65B parameters. Notably, the speed gains from my implementation increase as model size scales up, making this approach particularly valuable for larger models — which is basically the intended use for QLoRA.</p>
 <p>We start with discussing what QLoRA is and move on to the CUDA kernels that are typically launched by <code>bitsandybtes</code>, the library used for NF4 quantization in Unsloth and PEFT. From there, we mimic the CUDA kernels in Triton and benchmark its performance. We sort of know that the CUDA kernels can be fused in Triton and use this to our advantage to create a single fused kernel which turns out to be slower! After benchmarking with Nsight compute, we notice that memory coalescing is the offender and fix it in three distinct approaches that all outperform its CUDA counterpart.</p>
 <section id="parameter-efficient-fine-tuning-qlora" class="level1 page-columns page-full">
 <h1>Parameter Efficient Fine-Tuning &amp; QLoRA</h1>
@@ -545,64 +545,49 @@ window.Quarto = {
 <p>Fleshing point 2 out a bit more, we can load a block of the weights, get the corresponding absmax and dequantize it in a blockwise fashion before dequantizing the weights. The more I write this the more I think that there is a lot of locality referencing going on with the absmax, even if the dequantization itself is just an elementwise operation. The only downside I see is that we probably will dequantize the same absmax several times.</p>
 </section>
 </section>
-<section id="benchmarking-and-profiling" class="level1">
-<h1>Benchmarking and Profiling</h1>
-<p>Benchmarking and profiling was done on T4 GPUs, which are sm75 GPUs meaning that Triton will not handle bfloat16 operations.</p>
-<p>All kernels will be profiled using Nsight Compute on 8192 by 32768 sizes matrices, representing a linear layer in the MLP for LLaMA 70B models. The shape technically doesn’t matter though since dequantization is a linear operation.</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">ncu</span> <span class="at">--target-processes</span> all </span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--set</span> detailed </span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--import-source</span> yes </span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> SchedulerStats </span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> WarpStateStats </span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> SpeedOfLight_RooflineChart </span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> SpeedOfLight_HierarchicalTensorRooflineChart </span>
-<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>  <span class="ex">-o</span> output_file_location </span>
-<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>  <span class="ex">python</span> vector_add.py</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
-<p>We will also benchmark a variety of sizes from 7B to 70B LLaMA models using Triton’s <a href="https://triton-lang.org/main/python-api/generated/triton.testing.Benchmark.html">Benchmark</a> functionality to test how fast the resulting kernels are for increasing shapes.</p>
-</section>
 <section id="attempt-0-writing-two-kernels" class="level1">
 <h1>Attempt 0: Writing Two Kernels</h1>
 <p>As a baseline, let’s attempt to just translate the two CUDA Kernels into two Triton kernels. Code below is not exact, for that please see the <a href="">github</a> code.</p>
 <p>We can basically directly implement the absmax dequantization as described earlier. Note that the mean addition is done outside of the kernel call.</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="at">@triton.jit</span></span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_absmax_kernel_v0(</span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    absmax_ptr, absmax_quant_ptr, absmax_code_ptr, absmax_scale_ptr,</span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    numel: <span class="bu">int</span>, blocksize: <span class="bu">int</span>,</span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>    BLOCK_SIZE: tl.constexpr,</span>
-<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>):</span>
-<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>    offsets <span class="op">=</span> tl.program_id(<span class="dv">0</span>) <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, BLOCK_SIZE)</span>
-<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Load uint8 quant and look-up code.</span></span>
-<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>    absmax_quant <span class="op">=</span> tl.load(absmax_quant_ptr <span class="op">+</span> offsets)</span>
-<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>    absmax_code <span class="op">=</span> tl.load(absamx_code_ptr <span class="op">+</span> absmax_quant)</span>
-<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Look up scale and dequantize, see: strided index.</span></span>
-<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a>    absmax_scale <span class="op">=</span> tl.load(absmax_scale_ptr <span class="op">+</span> (offsets <span class="op">//</span> blocksize))</span>
-<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> absmax_code <span class="op">*</span> absmax_scale</span>
-<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>    tl.store(absmax_ptr <span class="op">+</span> offsets, absmax)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="at">@triton.jit</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_absmax_kernel_v0(</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    absmax_ptr, absmax_quant_ptr, absmax_code_ptr, absmax_scale_ptr,</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>    numel: <span class="bu">int</span>, blocksize: <span class="bu">int</span>,</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>    BLOCK_SIZE: tl.constexpr,</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>):</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>    offsets <span class="op">=</span> tl.program_id(<span class="dv">0</span>) <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, BLOCK_SIZE)</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Load uint8 quant and look-up code.</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>    absmax_quant <span class="op">=</span> tl.load(absmax_quant_ptr <span class="op">+</span> offsets)</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>    absmax_code <span class="op">=</span> tl.load(absamx_code_ptr <span class="op">+</span> absmax_quant)</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Look up scale and dequantize, see: strided index.</span></span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>    absmax_scale <span class="op">=</span> tl.load(absmax_scale_ptr <span class="op">+</span> (offsets <span class="op">//</span> blocksize))</span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> absmax_code <span class="op">*</span> absmax_scale</span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    tl.store(absmax_ptr <span class="op">+</span> offsets, absmax)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <p>The weights are quantized into groups of 64, so we need to ensure we load the correct absmax value. We also need to unpack the weights by shifting (first four) and masking (last four).</p>
-<div class="sourceCode" id="annotated-cell-8"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-8-1"><a href="#annotated-cell-8-1" aria-hidden="true" tabindex="-1"></a><span class="at">@triton.jit</span></span>
-<span id="annotated-cell-8-2"><a href="#annotated-cell-8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_weights_kernel_v0(</span>
-<span id="annotated-cell-8-3"><a href="#annotated-cell-8-3" aria-hidden="true" tabindex="-1"></a>    weights_ptr, weights_quant_ptr, weights_code_ptr, absmax_ptr,</span>
-<span id="annotated-cell-8-4"><a href="#annotated-cell-8-4" aria-hidden="true" tabindex="-1"></a>    numel_weights: <span class="bu">int</span>, blocksize: <span class="bu">int</span>,</span>
-<span id="annotated-cell-8-5"><a href="#annotated-cell-8-5" aria-hidden="true" tabindex="-1"></a>    BLOCK_SIZE: tl.constexpr,</span>
-<span id="annotated-cell-8-6"><a href="#annotated-cell-8-6" aria-hidden="true" tabindex="-1"></a>):</span>
-<span id="annotated-cell-8-7"><a href="#annotated-cell-8-7" aria-hidden="true" tabindex="-1"></a>    offsets <span class="op">=</span> tl.program_id(<span class="dv">0</span>) <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, BLOCK_SIZE)</span>
-<span id="annotated-cell-8-8"><a href="#annotated-cell-8-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="annotated-cell-8-9"><a href="#annotated-cell-8-9" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> tl.load(absmax_ptr <span class="op">+</span> (offsets <span class="op">//</span> blocksize))</span>
-<span id="annotated-cell-8-10"><a href="#annotated-cell-8-10" aria-hidden="true" tabindex="-1"></a>    weights_quant <span class="op">=</span> tl.load(weights_quant_ptr <span class="op">+</span> input_offset)</span>
-<span id="annotated-cell-8-11"><a href="#annotated-cell-8-11" aria-hidden="true" tabindex="-1"></a></span>
-<span id="annotated-cell-8-12"><a href="#annotated-cell-8-12" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Unpack first and last four bits &amp; do NF4 code lookup.</span></span>
-<span id="annotated-cell-8-13"><a href="#annotated-cell-8-13" aria-hidden="true" tabindex="-1"></a>    weights_first <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&gt;&gt;</span> <span class="dv">4</span>)) <span class="op">*</span> absmax</span>
-<span id="annotated-cell-8-14"><a href="#annotated-cell-8-14" aria-hidden="true" tabindex="-1"></a>    weights_second <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&amp;</span> <span class="bn">0xF</span>)) <span class="op">*</span> absmax</span>
-<span id="annotated-cell-8-15"><a href="#annotated-cell-8-15" aria-hidden="true" tabindex="-1"></a></span>
-<a class="code-annotation-anchor" data-target-cell="annotated-cell-8" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-8-16" class="code-annotation-target"><a href="#annotated-cell-8-16" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> input_offsets <span class="op">*</span> <span class="dv">2</span>, weights_first)</span>
-<span id="annotated-cell-8-17"><a href="#annotated-cell-8-17" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> input_offsets <span class="op">*</span> <span class="dv">2</span> <span class="op">+</span> <span class="dv">1</span>, weights_second)</span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode" id="annotated-cell-7"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-7-1"><a href="#annotated-cell-7-1" aria-hidden="true" tabindex="-1"></a><span class="at">@triton.jit</span></span>
+<span id="annotated-cell-7-2"><a href="#annotated-cell-7-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_weights_kernel_v0(</span>
+<span id="annotated-cell-7-3"><a href="#annotated-cell-7-3" aria-hidden="true" tabindex="-1"></a>    weights_ptr, weights_quant_ptr, weights_code_ptr, absmax_ptr,</span>
+<span id="annotated-cell-7-4"><a href="#annotated-cell-7-4" aria-hidden="true" tabindex="-1"></a>    numel_weights: <span class="bu">int</span>, blocksize: <span class="bu">int</span>,</span>
+<span id="annotated-cell-7-5"><a href="#annotated-cell-7-5" aria-hidden="true" tabindex="-1"></a>    BLOCK_SIZE: tl.constexpr,</span>
+<span id="annotated-cell-7-6"><a href="#annotated-cell-7-6" aria-hidden="true" tabindex="-1"></a>):</span>
+<span id="annotated-cell-7-7"><a href="#annotated-cell-7-7" aria-hidden="true" tabindex="-1"></a>    offsets <span class="op">=</span> tl.program_id(<span class="dv">0</span>) <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, BLOCK_SIZE)</span>
+<span id="annotated-cell-7-8"><a href="#annotated-cell-7-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-7-9"><a href="#annotated-cell-7-9" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> tl.load(absmax_ptr <span class="op">+</span> (offsets <span class="op">//</span> blocksize))</span>
+<span id="annotated-cell-7-10"><a href="#annotated-cell-7-10" aria-hidden="true" tabindex="-1"></a>    weights_quant <span class="op">=</span> tl.load(weights_quant_ptr <span class="op">+</span> input_offset)</span>
+<span id="annotated-cell-7-11"><a href="#annotated-cell-7-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-7-12"><a href="#annotated-cell-7-12" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Unpack first and last four bits &amp; do NF4 code lookup.</span></span>
+<span id="annotated-cell-7-13"><a href="#annotated-cell-7-13" aria-hidden="true" tabindex="-1"></a>    weights_first <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&gt;&gt;</span> <span class="dv">4</span>)) <span class="op">*</span> absmax</span>
+<span id="annotated-cell-7-14"><a href="#annotated-cell-7-14" aria-hidden="true" tabindex="-1"></a>    weights_second <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&amp;</span> <span class="bn">0xF</span>)) <span class="op">*</span> absmax</span>
+<span id="annotated-cell-7-15"><a href="#annotated-cell-7-15" aria-hidden="true" tabindex="-1"></a></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-7" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-7-16" class="code-annotation-target"><a href="#annotated-cell-7-16" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> input_offsets <span class="op">*</span> <span class="dv">2</span>, weights_first)</span>
+<span id="annotated-cell-7-17"><a href="#annotated-cell-7-17" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> input_offsets <span class="op">*</span> <span class="dv">2</span> <span class="op">+</span> <span class="dv">1</span>, weights_second)</span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <dl class="code-annotation-container-grid">
-<dt data-target-cell="annotated-cell-8" data-target-annotation="1">1</dt>
+<dt data-target-cell="annotated-cell-7" data-target-annotation="1">1</dt>
 <dd>
-<span data-code-cell="annotated-cell-8" data-code-lines="16" data-code-annotation="1">The way we store the data is interleaved. The first stores [0 -&gt; 0, 2 -&gt; 2], the second [1 -&gt; 1, 3 -&gt; 3] etc. This is not great for memory coalescing.</span>
+<span data-code-cell="annotated-cell-7" data-code-lines="16" data-code-annotation="1">The way we store the data is interleaved. The first stores [0 -&gt; 0, 2 -&gt; 2], the second [1 -&gt; 1, 3 -&gt; 3] etc. This is not great for memory coalescing.</span>
 </dd>
 </dl>
 <p>To benchmark performance, we dequantize a range of tensors that resemble LLaMA MLP weights from 7B to 65B with Triton’s <code>@triton.testing.perf_report</code>. Results can be seen in the figure below.</p>
@@ -618,41 +603,41 @@ window.Quarto = {
 <h1>Attempt 1: Single Fused Kernel</h1>
 <p>Now let’s step it up and fuse the kernels into one. The main thing we need to be careful of is pointer arithmetic.</p>
 <p>As a reminder, the weights are quantized with an absmax for every 64 weights, and each absmax in turn is quantized in blocks of 256. Dequantizing <code>weights[0]</code> will need <code>absmax[0]</code> and <code>absmax_scale[0]</code>. Dequantizing <code>weights[1000152]</code> will need <code>absmax[31254]</code> and <code>absmax_scale[122]</code>.</p>
-<div class="sourceCode" id="annotated-cell-9"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-9-1"><a href="#annotated-cell-9-1" aria-hidden="true" tabindex="-1"></a><span class="at">@triton.jit</span></span>
-<span id="annotated-cell-9-2"><a href="#annotated-cell-9-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_weights_v1(</span>
-<span id="annotated-cell-9-3"><a href="#annotated-cell-9-3" aria-hidden="true" tabindex="-1"></a>    weights_ptr, weights_quant_ptr, weights_code_ptr,</span>
-<span id="annotated-cell-9-4"><a href="#annotated-cell-9-4" aria-hidden="true" tabindex="-1"></a>    absmax_quant_ptr, absmax_code_ptr, absmax_scale_ptr, absmax_mean,</span>
-<span id="annotated-cell-9-5"><a href="#annotated-cell-9-5" aria-hidden="true" tabindex="-1"></a>    blocksize_weights, blocksize_absmax, numel_weights, numel_absmax,</span>
-<span id="annotated-cell-9-6"><a href="#annotated-cell-9-6" aria-hidden="true" tabindex="-1"></a>):</span>
-<span id="annotated-cell-9-7"><a href="#annotated-cell-9-7" aria-hidden="true" tabindex="-1"></a>    offsets <span class="op">=</span> tl.program_id(<span class="dv">0</span>) <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, BLOCK_SIZE)</span>
-<span id="annotated-cell-9-8"><a href="#annotated-cell-9-8" aria-hidden="true" tabindex="-1"></a></span>
-<a class="code-annotation-anchor" data-target-cell="annotated-cell-9" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-9-9" class="code-annotation-target"><a href="#annotated-cell-9-9" aria-hidden="true" tabindex="-1"></a>    absmax_offset <span class="op">=</span> offsets <span class="op">//</span> blocksize_weights</span>
-<span id="annotated-cell-9-10"><a href="#annotated-cell-9-10" aria-hidden="true" tabindex="-1"></a>    absmax_quant <span class="op">=</span> tl.load(absmax_quant_ptr <span class="op">+</span> absmax_offset)</span>
-<span id="annotated-cell-9-11"><a href="#annotated-cell-9-11" aria-hidden="true" tabindex="-1"></a>    absmax_code <span class="op">=</span> tl.load(absmax_code_ptr <span class="op">+</span> absmax_quant)</span>
-<span id="annotated-cell-9-12"><a href="#annotated-cell-9-12" aria-hidden="true" tabindex="-1"></a></span>
-<a class="code-annotation-anchor" data-target-cell="annotated-cell-9" data-target-annotation="2" onclick="event.preventDefault();">2</a><span id="annotated-cell-9-13" class="code-annotation-target"><a href="#annotated-cell-9-13" aria-hidden="true" tabindex="-1"></a>    absmax_scale_offsets <span class="op">=</span> offsets <span class="op">//</span> blocksize_weights <span class="op">//</span> blocksize_absmax</span>
-<span id="annotated-cell-9-14"><a href="#annotated-cell-9-14" aria-hidden="true" tabindex="-1"></a>    absmax_scale <span class="op">=</span> tl.load(absmax_scale_ptr <span class="op">+</span> absmax_scale_offsets)</span>
-<span id="annotated-cell-9-15"><a href="#annotated-cell-9-15" aria-hidden="true" tabindex="-1"></a></span>
-<a class="code-annotation-anchor" data-target-cell="annotated-cell-9" data-target-annotation="3" onclick="event.preventDefault();">3</a><span id="annotated-cell-9-16" class="code-annotation-target"><a href="#annotated-cell-9-16" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> absmax_code <span class="op">*</span> absmax_scale <span class="op">+</span> absmax_mean</span>
-<span id="annotated-cell-9-17"><a href="#annotated-cell-9-17" aria-hidden="true" tabindex="-1"></a></span>
-<span id="annotated-cell-9-18"><a href="#annotated-cell-9-18" aria-hidden="true" tabindex="-1"></a>    weights_quant <span class="op">=</span> tl.load(weights_quant_ptr <span class="op">+</span> input_offset)</span>
-<span id="annotated-cell-9-19"><a href="#annotated-cell-9-19" aria-hidden="true" tabindex="-1"></a>    weights_first <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&gt;&gt;</span> <span class="dv">4</span>)) <span class="op">*</span> absmax</span>
-<span id="annotated-cell-9-20"><a href="#annotated-cell-9-20" aria-hidden="true" tabindex="-1"></a>    weights_second <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&amp;</span> <span class="bn">0xF</span>)) <span class="op">*</span> absmax</span>
-<span id="annotated-cell-9-21"><a href="#annotated-cell-9-21" aria-hidden="true" tabindex="-1"></a></span>
-<span id="annotated-cell-9-22"><a href="#annotated-cell-9-22" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> input_offsets <span class="op">*</span> <span class="dv">2</span>, weights_first)</span>
-<span id="annotated-cell-9-23"><a href="#annotated-cell-9-23" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> input_offsets <span class="op">*</span> <span class="dv">2</span> <span class="op">+</span> <span class="dv">1</span>, weights_second)</span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode" id="annotated-cell-8"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-8-1"><a href="#annotated-cell-8-1" aria-hidden="true" tabindex="-1"></a><span class="at">@triton.jit</span></span>
+<span id="annotated-cell-8-2"><a href="#annotated-cell-8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_weights_v1(</span>
+<span id="annotated-cell-8-3"><a href="#annotated-cell-8-3" aria-hidden="true" tabindex="-1"></a>    weights_ptr, weights_quant_ptr, weights_code_ptr,</span>
+<span id="annotated-cell-8-4"><a href="#annotated-cell-8-4" aria-hidden="true" tabindex="-1"></a>    absmax_quant_ptr, absmax_code_ptr, absmax_scale_ptr, absmax_mean,</span>
+<span id="annotated-cell-8-5"><a href="#annotated-cell-8-5" aria-hidden="true" tabindex="-1"></a>    blocksize_weights, blocksize_absmax, numel_weights, numel_absmax,</span>
+<span id="annotated-cell-8-6"><a href="#annotated-cell-8-6" aria-hidden="true" tabindex="-1"></a>):</span>
+<span id="annotated-cell-8-7"><a href="#annotated-cell-8-7" aria-hidden="true" tabindex="-1"></a>    offsets <span class="op">=</span> tl.program_id(<span class="dv">0</span>) <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, BLOCK_SIZE)</span>
+<span id="annotated-cell-8-8"><a href="#annotated-cell-8-8" aria-hidden="true" tabindex="-1"></a></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-8" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-8-9" class="code-annotation-target"><a href="#annotated-cell-8-9" aria-hidden="true" tabindex="-1"></a>    absmax_offset <span class="op">=</span> offsets <span class="op">//</span> blocksize_weights</span>
+<span id="annotated-cell-8-10"><a href="#annotated-cell-8-10" aria-hidden="true" tabindex="-1"></a>    absmax_quant <span class="op">=</span> tl.load(absmax_quant_ptr <span class="op">+</span> absmax_offset)</span>
+<span id="annotated-cell-8-11"><a href="#annotated-cell-8-11" aria-hidden="true" tabindex="-1"></a>    absmax_code <span class="op">=</span> tl.load(absmax_code_ptr <span class="op">+</span> absmax_quant)</span>
+<span id="annotated-cell-8-12"><a href="#annotated-cell-8-12" aria-hidden="true" tabindex="-1"></a></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-8" data-target-annotation="2" onclick="event.preventDefault();">2</a><span id="annotated-cell-8-13" class="code-annotation-target"><a href="#annotated-cell-8-13" aria-hidden="true" tabindex="-1"></a>    absmax_scale_offsets <span class="op">=</span> offsets <span class="op">//</span> blocksize_weights <span class="op">//</span> blocksize_absmax</span>
+<span id="annotated-cell-8-14"><a href="#annotated-cell-8-14" aria-hidden="true" tabindex="-1"></a>    absmax_scale <span class="op">=</span> tl.load(absmax_scale_ptr <span class="op">+</span> absmax_scale_offsets)</span>
+<span id="annotated-cell-8-15"><a href="#annotated-cell-8-15" aria-hidden="true" tabindex="-1"></a></span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-8" data-target-annotation="3" onclick="event.preventDefault();">3</a><span id="annotated-cell-8-16" class="code-annotation-target"><a href="#annotated-cell-8-16" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> absmax_code <span class="op">*</span> absmax_scale <span class="op">+</span> absmax_mean</span>
+<span id="annotated-cell-8-17"><a href="#annotated-cell-8-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-8-18"><a href="#annotated-cell-8-18" aria-hidden="true" tabindex="-1"></a>    weights_quant <span class="op">=</span> tl.load(weights_quant_ptr <span class="op">+</span> input_offset)</span>
+<span id="annotated-cell-8-19"><a href="#annotated-cell-8-19" aria-hidden="true" tabindex="-1"></a>    weights_first <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&gt;&gt;</span> <span class="dv">4</span>)) <span class="op">*</span> absmax</span>
+<span id="annotated-cell-8-20"><a href="#annotated-cell-8-20" aria-hidden="true" tabindex="-1"></a>    weights_second <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&amp;</span> <span class="bn">0xF</span>)) <span class="op">*</span> absmax</span>
+<span id="annotated-cell-8-21"><a href="#annotated-cell-8-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-8-22"><a href="#annotated-cell-8-22" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> input_offsets <span class="op">*</span> <span class="dv">2</span>, weights_first)</span>
+<span id="annotated-cell-8-23"><a href="#annotated-cell-8-23" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> input_offsets <span class="op">*</span> <span class="dv">2</span> <span class="op">+</span> <span class="dv">1</span>, weights_second)</span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <dl class="code-annotation-container-grid">
-<dt data-target-cell="annotated-cell-9" data-target-annotation="1">1</dt>
+<dt data-target-cell="annotated-cell-8" data-target-annotation="1">1</dt>
 <dd>
-<span data-code-cell="annotated-cell-9" data-code-lines="9" data-code-annotation="1">each set of 64 weights shared the absmax</span>
+<span data-code-cell="annotated-cell-8" data-code-lines="9" data-code-annotation="1">each set of 64 weights shared the absmax</span>
 </dd>
-<dt data-target-cell="annotated-cell-9" data-target-annotation="2">2</dt>
+<dt data-target-cell="annotated-cell-8" data-target-annotation="2">2</dt>
 <dd>
-<span data-code-cell="annotated-cell-9" data-code-lines="13" data-code-annotation="2">Pointer arithmetic - double strided index is required for the scale of the absmax.</span>
+<span data-code-cell="annotated-cell-8" data-code-lines="13" data-code-annotation="2">Pointer arithmetic - double strided index is required for the scale of the absmax.</span>
 </dd>
-<dt data-target-cell="annotated-cell-9" data-target-annotation="3">3</dt>
+<dt data-target-cell="annotated-cell-8" data-target-annotation="3">3</dt>
 <dd>
-<span data-code-cell="annotated-cell-9" data-code-lines="16" data-code-annotation="3">Here we <em>do</em> add the mean inside the kernel.</span>
+<span data-code-cell="annotated-cell-8" data-code-lines="16" data-code-annotation="3">Here we <em>do</em> add the mean inside the kernel.</span>
 </dd>
 </dl>
 <p>Not much of an improvement here unfortunately, we will have to profile the kernel a bit to see what’s up.</p>
@@ -666,29 +651,29 @@ window.Quarto = {
 <section id="on-coalescing-memory-access" class="level1 page-columns page-full">
 <h1>On Coalescing Memory Access</h1>
 <p>Let’s address the point raised earlier on the interleaved storage we perform. The pattern we use for storage of the weights in both V0 and V1 is as follows:</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>weights_first[<span class="dv">0</span>] <span class="op">-&gt;</span> mem[<span class="dv">0</span>]</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>weights_first[<span class="dv">1</span>] <span class="op">-&gt;</span> mem[<span class="dv">2</span>]</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>weights_first[<span class="dv">2</span>] <span class="op">-&gt;</span> mem[<span class="dv">4</span>]</span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>weights_first[<span class="dv">3</span>] <span class="op">-&gt;</span> mem[<span class="dv">6</span>]</span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>weights_second[<span class="dv">1</span>] <span class="op">-&gt;</span> mem[<span class="dv">1</span>]</span>
-<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>weights_second[<span class="dv">3</span>] <span class="op">-&gt;</span> mem[<span class="dv">3</span>]</span>
-<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>weights_second[<span class="dv">5</span>] <span class="op">-&gt;</span> mem[<span class="dv">5</span>]</span>
-<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>weights_second[<span class="dv">7</span>] <span class="op">-&gt;</span> mem[<span class="dv">7</span>]</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>weights_first[<span class="dv">0</span>] <span class="op">-&gt;</span> mem[<span class="dv">0</span>]</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>weights_first[<span class="dv">1</span>] <span class="op">-&gt;</span> mem[<span class="dv">2</span>]</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>weights_first[<span class="dv">2</span>] <span class="op">-&gt;</span> mem[<span class="dv">4</span>]</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>weights_first[<span class="dv">3</span>] <span class="op">-&gt;</span> mem[<span class="dv">6</span>]</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>weights_second[<span class="dv">1</span>] <span class="op">-&gt;</span> mem[<span class="dv">1</span>]</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>weights_second[<span class="dv">3</span>] <span class="op">-&gt;</span> mem[<span class="dv">3</span>]</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>weights_second[<span class="dv">5</span>] <span class="op">-&gt;</span> mem[<span class="dv">5</span>]</span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>weights_second[<span class="dv">7</span>] <span class="op">-&gt;</span> mem[<span class="dv">7</span>]</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <p>This interleaved pattern represents poor memory coalescing, which impacts performance.</p>
 <p>Anything working on the GPU is created to access blocks of contiguous memory, this counts for CUDA and Triton. If your kernel can read/write in contiguous blocks (like <code>weights_first[0:32] -&gt; mem[0:32]</code>), access is <em>coalesced</em> and the kernel can take maximum advantage of bandwidth available. If instead the storage has to be done in parts, we are under utilizing bandwidth and have poor memory coalescing.</p>
 <p>An ideal pattern would store data contiguously: <code>weights_first[0:K] -&gt; mem[0:K]</code> for as large an <code>K</code> as possible!</p>
 <p>We can actually see this issue raised in Nsight Compute<a href="#fn9" class="footnote-ref" id="fnref9" role="doc-noteref"><sup>9</sup></a> too:</p>
 <div class="no-row-height column-margin column-container"><p><sup>9</sup>&nbsp;We use the following to profile the kernel:</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">ncu</span> <span class="at">--target-processes</span> all </span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--set</span> detailed </span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--import-source</span> yes </span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> SchedulerStats </span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> WarpStateStats </span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> SpeedOfLight_RooflineChart </span>
-<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> SpeedOfLight_HierarchicalTensorRooflineChart </span>
-<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>  <span class="ex">-o</span> v1_profile </span>
-<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>  <span class="ex">python</span> profile_kernel_v1.py</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">ncu</span> <span class="at">--target-processes</span> all </span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--set</span> detailed </span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--import-source</span> yes </span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> SchedulerStats </span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> WarpStateStats </span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> SpeedOfLight_RooflineChart </span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--section</span> SpeedOfLight_HierarchicalTensorRooflineChart </span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>  <span class="ex">-o</span> v1_profile </span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>  <span class="ex">python</span> profile_kernel_v1.py</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div><p><img src="img/nsight_v1.png" class="img-fluid"></p>
 <p>The kernel suffers from high warp stall percentages (14.84% and 12.03%) at the final two <code>tl.store</code> operation. The other thing we notice is the “Global Excessive” metric at 50.00% for these store operations, both of which are <strong>indicating inefficient memory access patterns</strong>.</p>
 <p>Let’s think of some way to un-interleave the weights before storing in kernel V2.</p>
@@ -696,55 +681,55 @@ window.Quarto = {
 <section id="attempt-2-same-approach-but-tl.join-the-weights" class="level1">
 <h1>Attempt 2: Same Approach, but <code>tl.join</code> the Weights</h1>
 <p>I looked around quite a bit in the Triton docs and we have some stuff to work with. Namely, <a href="https://github.com/triton-lang/triton/blob/main/python/triton/language/semantic.py#L688-L710"><code>tl.join</code></a> seems to exactly what we want, interleave two tensors into one. It will leave us with a 2D block, which we can simply reshape to a contiguous representation of the weights. In code:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span>w_interleaved <span class="op">=</span> tl.interleave(</span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>   [w0, w2, w4],</span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>   [w1, w3, w5] </span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span>w_interleaved</span>
-<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>[[w0, w1],</span>
-<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a> [w2, w3],</span>
-<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a> [w4, w5]]</span>
-<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span>w_out <span class="op">=</span> tl.reshape(w_interleaved, <span class="op">-</span><span class="dv">1</span>)</span>
-<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span>w_out</span>
-<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>[w0, w1, w2, w3, w4, w5]</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span>w_interleaved <span class="op">=</span> tl.interleave(</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>   [w0, w2, w4],</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>   [w1, w3, w5] </span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span>w_interleaved</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>[[w0, w1],</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a> [w2, w3],</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a> [w4, w5]]</span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span>w_out <span class="op">=</span> tl.reshape(w_interleaved, <span class="op">-</span><span class="dv">1</span>)</span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;&gt;&gt;</span>w_out</span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>[w0, w1, w2, w3, w4, w5]</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <p>Now for rewriting V1:</p>
-<div class="sourceCode" id="annotated-cell-12"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-12-1"><a href="#annotated-cell-12-1" aria-hidden="true" tabindex="-1"></a><span class="at">@triton.jit</span></span>
-<span id="annotated-cell-12-2"><a href="#annotated-cell-12-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_weights_v1(</span>
-<span id="annotated-cell-12-3"><a href="#annotated-cell-12-3" aria-hidden="true" tabindex="-1"></a>    weights_ptr, weights_quant_ptr, weights_code_ptr,</span>
-<span id="annotated-cell-12-4"><a href="#annotated-cell-12-4" aria-hidden="true" tabindex="-1"></a>    absmax_quant_ptr, absmax_code_ptr, absmax_scale_ptr, absmax_mean,</span>
-<span id="annotated-cell-12-5"><a href="#annotated-cell-12-5" aria-hidden="true" tabindex="-1"></a>    blocksize_weights, blocksize_absmax, numel_weights, numel_absmax,</span>
-<span id="annotated-cell-12-6"><a href="#annotated-cell-12-6" aria-hidden="true" tabindex="-1"></a>):</span>
-<span id="annotated-cell-12-7"><a href="#annotated-cell-12-7" aria-hidden="true" tabindex="-1"></a>    offsets <span class="op">=</span> tl.program_id(<span class="dv">0</span>) <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, BLOCK_SIZE)</span>
-<span id="annotated-cell-12-8"><a href="#annotated-cell-12-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="annotated-cell-12-9"><a href="#annotated-cell-12-9" aria-hidden="true" tabindex="-1"></a>    absmax_offset <span class="op">=</span> offsets <span class="op">//</span> blocksize_weights</span>
-<span id="annotated-cell-12-10"><a href="#annotated-cell-12-10" aria-hidden="true" tabindex="-1"></a>    absmax_quant <span class="op">=</span> tl.load(absmax_quant_ptr <span class="op">+</span> absmax_offset)</span>
-<span id="annotated-cell-12-11"><a href="#annotated-cell-12-11" aria-hidden="true" tabindex="-1"></a>    absmax_code <span class="op">=</span> tl.load(absmax_code_ptr <span class="op">+</span> absmax_quant)</span>
-<span id="annotated-cell-12-12"><a href="#annotated-cell-12-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="annotated-cell-12-13"><a href="#annotated-cell-12-13" aria-hidden="true" tabindex="-1"></a>    absmax_scale_offsets <span class="op">=</span> offsets <span class="op">//</span> blocksize_weights <span class="op">//</span> blocksize_absmax</span>
-<span id="annotated-cell-12-14"><a href="#annotated-cell-12-14" aria-hidden="true" tabindex="-1"></a>    absmax_scale <span class="op">=</span> tl.load(absmax_scale_ptr <span class="op">+</span> absmax_scale_offsets)</span>
-<span id="annotated-cell-12-15"><a href="#annotated-cell-12-15" aria-hidden="true" tabindex="-1"></a></span>
-<span id="annotated-cell-12-16"><a href="#annotated-cell-12-16" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> absmax_code <span class="op">*</span> absmax_scale <span class="op">+</span> absmax_mean</span>
-<span id="annotated-cell-12-17"><a href="#annotated-cell-12-17" aria-hidden="true" tabindex="-1"></a></span>
-<span id="annotated-cell-12-18"><a href="#annotated-cell-12-18" aria-hidden="true" tabindex="-1"></a>    weights_quant <span class="op">=</span> tl.load(weights_quant_ptr <span class="op">+</span> input_offset)</span>
-<span id="annotated-cell-12-19"><a href="#annotated-cell-12-19" aria-hidden="true" tabindex="-1"></a>    weights_first <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&gt;&gt;</span> <span class="dv">4</span>)) <span class="op">*</span> absmax</span>
-<span id="annotated-cell-12-20"><a href="#annotated-cell-12-20" aria-hidden="true" tabindex="-1"></a>    weights_second <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&amp;</span> <span class="bn">0xF</span>)) <span class="op">*</span> absmax</span>
-<span id="annotated-cell-12-21"><a href="#annotated-cell-12-21" aria-hidden="true" tabindex="-1"></a>  </span>
-<span id="annotated-cell-12-22"><a href="#annotated-cell-12-22" aria-hidden="true" tabindex="-1"></a>    weights <span class="op">=</span> tl.reshape(</span>
-<a class="code-annotation-anchor" data-target-cell="annotated-cell-12" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-12-23" class="code-annotation-target"><a href="#annotated-cell-12-23" aria-hidden="true" tabindex="-1"></a>        tl.interleave(weights_first, weights_second), <span class="dv">2</span> <span class="op">*</span> BLOCK_SIZE</span>
-<span id="annotated-cell-12-24"><a href="#annotated-cell-12-24" aria-hidden="true" tabindex="-1"></a>    )</span>
-<span id="annotated-cell-12-25"><a href="#annotated-cell-12-25" aria-hidden="true" tabindex="-1"></a></span>
-<span id="annotated-cell-12-26"><a href="#annotated-cell-12-26" aria-hidden="true" tabindex="-1"></a>    output_offset <span class="op">=</span> (</span>
-<a class="code-annotation-anchor" data-target-cell="annotated-cell-12" data-target-annotation="2" onclick="event.preventDefault();">2</a><span id="annotated-cell-12-27" class="code-annotation-target"><a href="#annotated-cell-12-27" aria-hidden="true" tabindex="-1"></a>      tl.program_id(<span class="dv">0</span>) <span class="op">*</span> <span class="dv">2</span> <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, <span class="dv">2</span> <span class="op">*</span> BLOCK_SIZE)</span>
-<span id="annotated-cell-12-28"><a href="#annotated-cell-12-28" aria-hidden="true" tabindex="-1"></a>    )</span>
-<span id="annotated-cell-12-29"><a href="#annotated-cell-12-29" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> output_offset, weights)</span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode" id="annotated-cell-11"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-11-1"><a href="#annotated-cell-11-1" aria-hidden="true" tabindex="-1"></a><span class="at">@triton.jit</span></span>
+<span id="annotated-cell-11-2"><a href="#annotated-cell-11-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_weights_v1(</span>
+<span id="annotated-cell-11-3"><a href="#annotated-cell-11-3" aria-hidden="true" tabindex="-1"></a>    weights_ptr, weights_quant_ptr, weights_code_ptr,</span>
+<span id="annotated-cell-11-4"><a href="#annotated-cell-11-4" aria-hidden="true" tabindex="-1"></a>    absmax_quant_ptr, absmax_code_ptr, absmax_scale_ptr, absmax_mean,</span>
+<span id="annotated-cell-11-5"><a href="#annotated-cell-11-5" aria-hidden="true" tabindex="-1"></a>    blocksize_weights, blocksize_absmax, numel_weights, numel_absmax,</span>
+<span id="annotated-cell-11-6"><a href="#annotated-cell-11-6" aria-hidden="true" tabindex="-1"></a>):</span>
+<span id="annotated-cell-11-7"><a href="#annotated-cell-11-7" aria-hidden="true" tabindex="-1"></a>    offsets <span class="op">=</span> tl.program_id(<span class="dv">0</span>) <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, BLOCK_SIZE)</span>
+<span id="annotated-cell-11-8"><a href="#annotated-cell-11-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-11-9"><a href="#annotated-cell-11-9" aria-hidden="true" tabindex="-1"></a>    absmax_offset <span class="op">=</span> offsets <span class="op">//</span> blocksize_weights</span>
+<span id="annotated-cell-11-10"><a href="#annotated-cell-11-10" aria-hidden="true" tabindex="-1"></a>    absmax_quant <span class="op">=</span> tl.load(absmax_quant_ptr <span class="op">+</span> absmax_offset)</span>
+<span id="annotated-cell-11-11"><a href="#annotated-cell-11-11" aria-hidden="true" tabindex="-1"></a>    absmax_code <span class="op">=</span> tl.load(absmax_code_ptr <span class="op">+</span> absmax_quant)</span>
+<span id="annotated-cell-11-12"><a href="#annotated-cell-11-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-11-13"><a href="#annotated-cell-11-13" aria-hidden="true" tabindex="-1"></a>    absmax_scale_offsets <span class="op">=</span> offsets <span class="op">//</span> blocksize_weights <span class="op">//</span> blocksize_absmax</span>
+<span id="annotated-cell-11-14"><a href="#annotated-cell-11-14" aria-hidden="true" tabindex="-1"></a>    absmax_scale <span class="op">=</span> tl.load(absmax_scale_ptr <span class="op">+</span> absmax_scale_offsets)</span>
+<span id="annotated-cell-11-15"><a href="#annotated-cell-11-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-11-16"><a href="#annotated-cell-11-16" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> absmax_code <span class="op">*</span> absmax_scale <span class="op">+</span> absmax_mean</span>
+<span id="annotated-cell-11-17"><a href="#annotated-cell-11-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-11-18"><a href="#annotated-cell-11-18" aria-hidden="true" tabindex="-1"></a>    weights_quant <span class="op">=</span> tl.load(weights_quant_ptr <span class="op">+</span> input_offset)</span>
+<span id="annotated-cell-11-19"><a href="#annotated-cell-11-19" aria-hidden="true" tabindex="-1"></a>    weights_first <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&gt;&gt;</span> <span class="dv">4</span>)) <span class="op">*</span> absmax</span>
+<span id="annotated-cell-11-20"><a href="#annotated-cell-11-20" aria-hidden="true" tabindex="-1"></a>    weights_second <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> (weights_quant <span class="op">&amp;</span> <span class="bn">0xF</span>)) <span class="op">*</span> absmax</span>
+<span id="annotated-cell-11-21"><a href="#annotated-cell-11-21" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="annotated-cell-11-22"><a href="#annotated-cell-11-22" aria-hidden="true" tabindex="-1"></a>    weights <span class="op">=</span> tl.reshape(</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-11" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-11-23" class="code-annotation-target"><a href="#annotated-cell-11-23" aria-hidden="true" tabindex="-1"></a>        tl.interleave(weights_first, weights_second), <span class="dv">2</span> <span class="op">*</span> BLOCK_SIZE</span>
+<span id="annotated-cell-11-24"><a href="#annotated-cell-11-24" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="annotated-cell-11-25"><a href="#annotated-cell-11-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-11-26"><a href="#annotated-cell-11-26" aria-hidden="true" tabindex="-1"></a>    output_offset <span class="op">=</span> (</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-11" data-target-annotation="2" onclick="event.preventDefault();">2</a><span id="annotated-cell-11-27" class="code-annotation-target"><a href="#annotated-cell-11-27" aria-hidden="true" tabindex="-1"></a>      tl.program_id(<span class="dv">0</span>) <span class="op">*</span> <span class="dv">2</span> <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, <span class="dv">2</span> <span class="op">*</span> BLOCK_SIZE)</span>
+<span id="annotated-cell-11-28"><a href="#annotated-cell-11-28" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="annotated-cell-11-29"><a href="#annotated-cell-11-29" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> output_offset, weights)</span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <dl class="code-annotation-container-grid">
-<dt data-target-cell="annotated-cell-12" data-target-annotation="1">1</dt>
+<dt data-target-cell="annotated-cell-11" data-target-annotation="1">1</dt>
 <dd>
-<span data-code-cell="annotated-cell-12" data-code-lines="23" data-code-annotation="1">Perform the interleave-reshape operations.</span>
+<span data-code-cell="annotated-cell-11" data-code-lines="23" data-code-annotation="1">Perform the interleave-reshape operations.</span>
 </dd>
-<dt data-target-cell="annotated-cell-12" data-target-annotation="2">2</dt>
+<dt data-target-cell="annotated-cell-11" data-target-annotation="2">2</dt>
 <dd>
-<span data-code-cell="annotated-cell-12" data-code-lines="27" data-code-annotation="2">Adjust the output position since we can now do a single store.</span>
+<span data-code-cell="annotated-cell-11" data-code-lines="27" data-code-annotation="2">Adjust the output position since we can now do a single store.</span>
 </dd>
 </dl>
 <p>Great, we see below that we can actually outperform the CUDA implementation by a wide margin, and that the margin grows with larger input sizes.</p>
@@ -760,44 +745,44 @@ window.Quarto = {
 <p>At this point I was satisified with the kernel, but wanted to see what other dequantization kernels did. There is no reference for the NF4 dequant kernel in Triton available elsewhere, but plenty of approaches that use bit packed tensors. As an example, there is a <a href="https://pytorch.org/blog/accelerating-triton/">PyTorch Post</a> on GPTQ dequantization, although here the dequantization is done inside of a matmul kernel.</p>
 <p>A more annotated version can be seen in <a href="https://github.com/mobiusml/gemlite/blob/master/gemlite/triton_kernels/gemm_A16fWnO16f_int32packing.py">gemlite</a>. The kernel <a href="https://github.com/mobiusml/gemlite/blob/master/gemlite/triton_kernels/gemm_A16fWnO16f_int32packing.py#L203">loads the weights double</a> (for a 2-packed uint8), creates a <a href="https://github.com/mobiusml/gemlite/blob/master/gemlite/triton_kernels/gemm_A16fWnO16f_int32packing.py#L206">shift</a> that only operates on every other element, and <a href="https://github.com/mobiusml/gemlite/blob/master/gemlite/triton_kernels/utils.py#L26">masks</a> every element as we usually do to keep the 4 least significant bits.</p>
 <p>I’ve implemented the same in the kernel below.</p>
-<div class="sourceCode" id="annotated-cell-13"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-13-1"><a href="#annotated-cell-13-1" aria-hidden="true" tabindex="-1"></a><span class="at">@triton.jit</span></span>
-<span id="annotated-cell-13-2"><a href="#annotated-cell-13-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_weights_v1(</span>
-<span id="annotated-cell-13-3"><a href="#annotated-cell-13-3" aria-hidden="true" tabindex="-1"></a>    weights_ptr, weights_quant_ptr, weights_code_ptr,</span>
-<span id="annotated-cell-13-4"><a href="#annotated-cell-13-4" aria-hidden="true" tabindex="-1"></a>    absmax_quant_ptr, absmax_code_ptr, absmax_scale_ptr, absmax_mean,</span>
-<span id="annotated-cell-13-5"><a href="#annotated-cell-13-5" aria-hidden="true" tabindex="-1"></a>    blocksize_weights, blocksize_absmax, numel_weights, numel_absmax,</span>
-<span id="annotated-cell-13-6"><a href="#annotated-cell-13-6" aria-hidden="true" tabindex="-1"></a>):</span>
-<span id="annotated-cell-13-7"><a href="#annotated-cell-13-7" aria-hidden="true" tabindex="-1"></a>    offsets <span class="op">=</span> tl.program_id(<span class="dv">0</span>) <span class="op">*</span> <span class="dv">2</span> <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, <span class="dv">2</span> <span class="op">*</span> BLOCK_SIZE)</span>
-<a class="code-annotation-anchor" data-target-cell="annotated-cell-13" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-13-8" class="code-annotation-target"><a href="#annotated-cell-13-8" aria-hidden="true" tabindex="-1"></a>    double_offsets <span class="op">=</span> offsets <span class="op">//</span> <span class="dv">2</span></span>
-<span id="annotated-cell-13-9"><a href="#annotated-cell-13-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="annotated-cell-13-10"><a href="#annotated-cell-13-10" aria-hidden="true" tabindex="-1"></a>    absmax_offset <span class="op">=</span> double_offsets <span class="op">//</span> blocksize_weights</span>
-<span id="annotated-cell-13-11"><a href="#annotated-cell-13-11" aria-hidden="true" tabindex="-1"></a>    absmax_quant <span class="op">=</span> tl.load(absmax_quant_ptr <span class="op">+</span> absmax_offset)</span>
-<span id="annotated-cell-13-12"><a href="#annotated-cell-13-12" aria-hidden="true" tabindex="-1"></a>    absmax_code <span class="op">=</span> tl.load(absmax_code_ptr <span class="op">+</span> absmax_quant)</span>
-<span id="annotated-cell-13-13"><a href="#annotated-cell-13-13" aria-hidden="true" tabindex="-1"></a></span>
-<span id="annotated-cell-13-14"><a href="#annotated-cell-13-14" aria-hidden="true" tabindex="-1"></a>    absmax_scale_offsets <span class="op">=</span> double_offsets <span class="op">//</span> blocksize_weights <span class="op">//</span> blocksize_absmax</span>
-<span id="annotated-cell-13-15"><a href="#annotated-cell-13-15" aria-hidden="true" tabindex="-1"></a>    absmax_scale <span class="op">=</span> tl.load(absmax_scale_ptr <span class="op">+</span> absmax_scale_offsets)</span>
-<span id="annotated-cell-13-16"><a href="#annotated-cell-13-16" aria-hidden="true" tabindex="-1"></a></span>
-<span id="annotated-cell-13-17"><a href="#annotated-cell-13-17" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> absmax_code <span class="op">*</span> absmax_scale <span class="op">+</span> absmax_mean</span>
-<span id="annotated-cell-13-18"><a href="#annotated-cell-13-18" aria-hidden="true" tabindex="-1"></a></span>
-<span id="annotated-cell-13-19"><a href="#annotated-cell-13-19" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Since the weights here are duplicated ([w0, w0, w1, w1]) we unpack by masking</span></span>
-<span id="annotated-cell-13-20"><a href="#annotated-cell-13-20" aria-hidden="true" tabindex="-1"></a>    <span class="co"># in a local OR based on index.</span></span>
-<span id="annotated-cell-13-21"><a href="#annotated-cell-13-21" aria-hidden="true" tabindex="-1"></a>    packed_weights <span class="op">=</span> tl.load(weights_quant_ptr <span class="op">+</span> double_offset, mask<span class="op">=</span>double_mask)</span>
-<a class="code-annotation-anchor" data-target-cell="annotated-cell-13" data-target-annotation="2" onclick="event.preventDefault();">2</a><span id="annotated-cell-13-22" class="code-annotation-target"><a href="#annotated-cell-13-22" aria-hidden="true" tabindex="-1"></a>    shift <span class="op">=</span> tl.where((logical_offset <span class="op">%</span> <span class="dv">2</span>) <span class="op">==</span> <span class="dv">0</span>, <span class="dv">4</span>, <span class="dv">0</span>)</span>
-<a class="code-annotation-anchor" data-target-cell="annotated-cell-13" data-target-annotation="3" onclick="event.preventDefault();">3</a><span id="annotated-cell-13-23" class="code-annotation-target"><a href="#annotated-cell-13-23" aria-hidden="true" tabindex="-1"></a>    unpacked_bits <span class="op">=</span> (packed_weights <span class="op">&gt;&gt;</span> shift) <span class="op">&amp;</span> <span class="bn">0x0F</span></span>
-<span id="annotated-cell-13-24"><a href="#annotated-cell-13-24" aria-hidden="true" tabindex="-1"></a></span>
-<span id="annotated-cell-13-25"><a href="#annotated-cell-13-25" aria-hidden="true" tabindex="-1"></a>    weights <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> unpacked_bits) <span class="op">*</span> absmax</span>
-<span id="annotated-cell-13-26"><a href="#annotated-cell-13-26" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> logical_offset, weights, mask<span class="op">=</span>logical_mask)</span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode" id="annotated-cell-12"><pre class="sourceCode python code-annotation-code code-with-copy code-annotated"><code class="sourceCode python"><span id="annotated-cell-12-1"><a href="#annotated-cell-12-1" aria-hidden="true" tabindex="-1"></a><span class="at">@triton.jit</span></span>
+<span id="annotated-cell-12-2"><a href="#annotated-cell-12-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dequantize_weights_v1(</span>
+<span id="annotated-cell-12-3"><a href="#annotated-cell-12-3" aria-hidden="true" tabindex="-1"></a>    weights_ptr, weights_quant_ptr, weights_code_ptr,</span>
+<span id="annotated-cell-12-4"><a href="#annotated-cell-12-4" aria-hidden="true" tabindex="-1"></a>    absmax_quant_ptr, absmax_code_ptr, absmax_scale_ptr, absmax_mean,</span>
+<span id="annotated-cell-12-5"><a href="#annotated-cell-12-5" aria-hidden="true" tabindex="-1"></a>    blocksize_weights, blocksize_absmax, numel_weights, numel_absmax,</span>
+<span id="annotated-cell-12-6"><a href="#annotated-cell-12-6" aria-hidden="true" tabindex="-1"></a>):</span>
+<span id="annotated-cell-12-7"><a href="#annotated-cell-12-7" aria-hidden="true" tabindex="-1"></a>    offsets <span class="op">=</span> tl.program_id(<span class="dv">0</span>) <span class="op">*</span> <span class="dv">2</span> <span class="op">*</span> BLOCK_SIZE <span class="op">+</span> tl.arange(<span class="dv">0</span>, <span class="dv">2</span> <span class="op">*</span> BLOCK_SIZE)</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-12" data-target-annotation="1" onclick="event.preventDefault();">1</a><span id="annotated-cell-12-8" class="code-annotation-target"><a href="#annotated-cell-12-8" aria-hidden="true" tabindex="-1"></a>    double_offsets <span class="op">=</span> offsets <span class="op">//</span> <span class="dv">2</span></span>
+<span id="annotated-cell-12-9"><a href="#annotated-cell-12-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-12-10"><a href="#annotated-cell-12-10" aria-hidden="true" tabindex="-1"></a>    absmax_offset <span class="op">=</span> double_offsets <span class="op">//</span> blocksize_weights</span>
+<span id="annotated-cell-12-11"><a href="#annotated-cell-12-11" aria-hidden="true" tabindex="-1"></a>    absmax_quant <span class="op">=</span> tl.load(absmax_quant_ptr <span class="op">+</span> absmax_offset)</span>
+<span id="annotated-cell-12-12"><a href="#annotated-cell-12-12" aria-hidden="true" tabindex="-1"></a>    absmax_code <span class="op">=</span> tl.load(absmax_code_ptr <span class="op">+</span> absmax_quant)</span>
+<span id="annotated-cell-12-13"><a href="#annotated-cell-12-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-12-14"><a href="#annotated-cell-12-14" aria-hidden="true" tabindex="-1"></a>    absmax_scale_offsets <span class="op">=</span> double_offsets <span class="op">//</span> blocksize_weights <span class="op">//</span> blocksize_absmax</span>
+<span id="annotated-cell-12-15"><a href="#annotated-cell-12-15" aria-hidden="true" tabindex="-1"></a>    absmax_scale <span class="op">=</span> tl.load(absmax_scale_ptr <span class="op">+</span> absmax_scale_offsets)</span>
+<span id="annotated-cell-12-16"><a href="#annotated-cell-12-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-12-17"><a href="#annotated-cell-12-17" aria-hidden="true" tabindex="-1"></a>    absmax <span class="op">=</span> absmax_code <span class="op">*</span> absmax_scale <span class="op">+</span> absmax_mean</span>
+<span id="annotated-cell-12-18"><a href="#annotated-cell-12-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-12-19"><a href="#annotated-cell-12-19" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Since the weights here are duplicated ([w0, w0, w1, w1]) we unpack by masking</span></span>
+<span id="annotated-cell-12-20"><a href="#annotated-cell-12-20" aria-hidden="true" tabindex="-1"></a>    <span class="co"># in a local OR based on index.</span></span>
+<span id="annotated-cell-12-21"><a href="#annotated-cell-12-21" aria-hidden="true" tabindex="-1"></a>    packed_weights <span class="op">=</span> tl.load(weights_quant_ptr <span class="op">+</span> double_offset, mask<span class="op">=</span>double_mask)</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-12" data-target-annotation="2" onclick="event.preventDefault();">2</a><span id="annotated-cell-12-22" class="code-annotation-target"><a href="#annotated-cell-12-22" aria-hidden="true" tabindex="-1"></a>    shift <span class="op">=</span> tl.where((logical_offset <span class="op">%</span> <span class="dv">2</span>) <span class="op">==</span> <span class="dv">0</span>, <span class="dv">4</span>, <span class="dv">0</span>)</span>
+<a class="code-annotation-anchor" data-target-cell="annotated-cell-12" data-target-annotation="3" onclick="event.preventDefault();">3</a><span id="annotated-cell-12-23" class="code-annotation-target"><a href="#annotated-cell-12-23" aria-hidden="true" tabindex="-1"></a>    unpacked_bits <span class="op">=</span> (packed_weights <span class="op">&gt;&gt;</span> shift) <span class="op">&amp;</span> <span class="bn">0x0F</span></span>
+<span id="annotated-cell-12-24"><a href="#annotated-cell-12-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="annotated-cell-12-25"><a href="#annotated-cell-12-25" aria-hidden="true" tabindex="-1"></a>    weights <span class="op">=</span> tl.load(weights_code_ptr <span class="op">+</span> unpacked_bits) <span class="op">*</span> absmax</span>
+<span id="annotated-cell-12-26"><a href="#annotated-cell-12-26" aria-hidden="true" tabindex="-1"></a>    tl.store(weights_ptr <span class="op">+</span> logical_offset, weights, mask<span class="op">=</span>logical_mask)</span><div class="code-annotation-gutter-bg"></div><div class="code-annotation-gutter"></div></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <dl class="code-annotation-container-grid">
-<dt data-target-cell="annotated-cell-13" data-target-annotation="1">1</dt>
+<dt data-target-cell="annotated-cell-12" data-target-annotation="1">1</dt>
 <dd>
-<span data-code-cell="annotated-cell-13" data-code-lines="8" data-code-annotation="1">load the same weight twice [0, 1, 2, …] -&gt; [0, 0, 1, 1, 2, …]. This also mans we end up loading less weights in general for a given call.</span>
+<span data-code-cell="annotated-cell-12" data-code-lines="8" data-code-annotation="1">load the same weight twice [0, 1, 2, …] -&gt; [0, 0, 1, 1, 2, …]. This also mans we end up loading less weights in general for a given call.</span>
 </dd>
-<dt data-target-cell="annotated-cell-13" data-target-annotation="2">2</dt>
+<dt data-target-cell="annotated-cell-12" data-target-annotation="2">2</dt>
 <dd>
-<span data-code-cell="annotated-cell-13" data-code-lines="22" data-code-annotation="2">Shift only every other element ([0, <em>0</em>, 1, <em>1</em>, …]).</span>
+<span data-code-cell="annotated-cell-12" data-code-lines="22" data-code-annotation="2">Shift only every other element ([0, <em>0</em>, 1, <em>1</em>, …]).</span>
 </dd>
-<dt data-target-cell="annotated-cell-13" data-target-annotation="3">3</dt>
+<dt data-target-cell="annotated-cell-12" data-target-annotation="3">3</dt>
 <dd>
-<span data-code-cell="annotated-cell-13" data-code-lines="23" data-code-annotation="3">Apply the boolean mask to keep the least significant 4 bits only.</span>
+<span data-code-cell="annotated-cell-12" data-code-lines="23" data-code-annotation="3">Apply the boolean mask to keep the least significant 4 bits only.</span>
 </dd>
 </dl>
 <p>Unfortunately, this approach seems to slightly underperform. The kernel is exact, so I doubt the implementation has an issue, maybe the join-reshape kernel is faster? It might be worth exploring this approach in existing low-bit dequantization kernels if that is the case.</p>
